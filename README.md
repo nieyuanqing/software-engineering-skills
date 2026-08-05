@@ -37,7 +37,8 @@ software-engineering-skills/
 │       └── application-prod.yml  prod profile（WARN 日志，Swagger 关闭）
 └── .claude/
     └── skills/
-        └── new-java-project.md   Claude Code skill 定义
+        ├── new-java-project.md   Claude Code skill 定义（为 Java/Spring Boot 工程生成部署配置）
+        └── common-rules.md       Claude Code skill 定义（通用行为规范：任务摘要、v0 文档保护、禁止硬编码）
 ```
 
 ---
@@ -84,15 +85,36 @@ software-engineering-skills/
 - 部署日志格式：`[YYYY-MM-DD HH:MM:SS] ===== <模块名> =====`
 - 共享主机安全规范：不自动 `systemctl start supervisor`，不随意改动其他项目配置
 
+### `/common-rules`
+
+通用行为规范，调用后对当前会话的所有任务生效：
+
+- **任务摘要**：每次任务完成后输出结果清单、影响范围（新增/修改/删除文件）、开始和结束时间
+- **v0 文档保护**：禁止修改路径或文件名含 `v0` 的原始产品设计文档，只读
+- **禁止硬编码**：密码、密钥、Token 等敏感信息必须通过环境变量或占位符处理
+
+**用法**
+
+```bash
+/common-rules    # 激活通用规范，对后续所有任务生效
+```
+
 ---
 
 ## 安装
 
-在新机器上克隆仓库后安装：
+在新机器上克隆仓库后安装所有 skills：
 
 ```bash
 git clone https://github.com/nieyuanqing/software-engineering-skills.git ~/software-engineering-skills
+
+# /new-java-project
 mkdir -p ~/.claude/skills/new-java-project
 ln -sf ~/software-engineering-skills/.claude/skills/new-java-project.md \
        ~/.claude/skills/new-java-project/SKILL.md
+
+# /common-rules
+mkdir -p ~/.claude/skills/common-rules
+ln -sf ~/software-engineering-skills/.claude/skills/common-rules.md \
+       ~/.claude/skills/common-rules/SKILL.md
 ```
