@@ -44,8 +44,12 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
     - deploy-conf/nginx/<name>.dev.conf    nginx vhost（dev 环境，HTTP/IP+端口）
     - deploy-conf/nginx/<name>.test.conf   nginx vhost（test 环境，HTTPS/域名）
     - deploy-conf/nginx/<name>.prod.conf   nginx vhost（prod 环境，HTTPS/域名）
-    - deploy-conf/supervisor/<name>.ini    supervisord 程序配置
-    - deploy-conf/env.example              环境变量模板（数据库连接、JWT 密钥等）
+    - deploy-conf/supervisor/<name>.dev.ini   supervisord 程序配置（dev 环境，--spring.profiles.active=dev）
+    - deploy-conf/supervisor/<name>.test.ini  supervisord 程序配置（test 环境）
+    - deploy-conf/supervisor/<name>.prod.ini  supervisord 程序配置（prod 环境）
+    - deploy-conf/env.dev.example             环境变量模板（dev 环境，JWT 可用占位符）
+    - deploy-conf/env.test.example            环境变量模板（test 环境，建议随机 JWT）
+    - deploy-conf/env.prod.example            环境变量模板（prod 环境，JWT 必须真实值）
     - specs/deployment.md                  本工程专属部署规范文档
     - specs/baseline-versions.md           基线版本规范（JDK、PostgreSQL、Spring Boot 等）
 
@@ -145,8 +149,12 @@ scripts/apply-ssl.sh
 deploy-conf/nginx/<SERVICE_NAME>.dev.conf
 deploy-conf/nginx/<SERVICE_NAME>.test.conf
 deploy-conf/nginx/<SERVICE_NAME>.prod.conf
-deploy-conf/supervisor/<SERVICE_NAME>.ini
-deploy-conf/env.example
+deploy-conf/supervisor/<SERVICE_NAME>.dev.ini
+deploy-conf/supervisor/<SERVICE_NAME>.test.ini
+deploy-conf/supervisor/<SERVICE_NAME>.prod.ini
+deploy-conf/env.dev.example
+deploy-conf/env.test.example
+deploy-conf/env.prod.example
 specs/deployment.md
 specs/baseline-versions.md
 ```
@@ -181,8 +189,12 @@ specs/baseline-versions.md
 | `deploy-conf/nginx/<SERVICE_NAME>.dev.conf` | `software-engineering-skills/templates/deploy-conf/nginx/service.dev.conf` |
 | `deploy-conf/nginx/<SERVICE_NAME>.test.conf` | `software-engineering-skills/templates/deploy-conf/nginx/service.test.conf` |
 | `deploy-conf/nginx/<SERVICE_NAME>.prod.conf` | `software-engineering-skills/templates/deploy-conf/nginx/service.prod.conf` |
-| `deploy-conf/supervisor/<SERVICE_NAME>.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.ini` |
-| `deploy-conf/env.example` | `software-engineering-skills/templates/deploy-conf/env.example` |
+| `deploy-conf/supervisor/<SERVICE_NAME>.dev.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.dev.ini` |
+| `deploy-conf/supervisor/<SERVICE_NAME>.test.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.test.ini` |
+| `deploy-conf/supervisor/<SERVICE_NAME>.prod.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.prod.ini` |
+| `deploy-conf/env.dev.example` | `software-engineering-skills/templates/deploy-conf/env.dev.example` |
+| `deploy-conf/env.test.example` | `software-engineering-skills/templates/deploy-conf/env.test.example` |
+| `deploy-conf/env.prod.example` | `software-engineering-skills/templates/deploy-conf/env.prod.example` |
 | `specs/deployment.md` | `software-engineering-skills/specs/deployment-template.md` |
 | `specs/baseline-versions.md` | `software-engineering-skills/specs/baseline-versions-template.md` |
 

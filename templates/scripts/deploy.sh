@@ -190,7 +190,7 @@ preflight_checks() {
 
 	if [ ! -f "${APP_DIR}/.env" ]; then
 		warn "[2/4] 未找到 ${APP_DIR}/.env —— 服务启动时会因缺少数据库连接信息而失败。"
-		warn "      请先执行： cp ${DEPLOY_CONF_DIR}/env.example ${APP_DIR}/.env 并填入真实凭证。"
+		warn "      请先执行： cp ${DEPLOY_CONF_DIR}/env.${ENV}.example ${APP_DIR}/.env 并填入真实凭证。"
 		exit 1
 	fi
 	info "[2/4] ${APP_DIR}/.env 存在 ✓"
@@ -337,9 +337,9 @@ do_deploy() {
 	cp "${JAR_FILE}" "${APP_DIR}/${SERVICE_NAME}.jar"
 
 	step "3/6 写入 supervisord 配置 ${SUPERVISOR_CONF}"
-	# 从 deploy-conf/supervisor/<SERVICE_NAME>.ini 拷贝，不在部署时用 heredoc 现场拼接——
+	# 从 deploy-conf/supervisor/<SERVICE_NAME>.${ENV}.ini 拷贝，不在部署时用 heredoc 现场拼接——
 	# 提前生成好、纳入版本管理，更容易审查和追踪变更。
-	cp "${DEPLOY_CONF_DIR}/supervisor/${SERVICE_NAME}.ini" "${SUPERVISOR_CONF}"
+	cp "${DEPLOY_CONF_DIR}/supervisor/${SERVICE_NAME}.${ENV}.ini" "${SUPERVISOR_CONF}"
 
 	step "4/6 重新加载 supervisord 并（重）启动服务"
 	supervisorctl reread

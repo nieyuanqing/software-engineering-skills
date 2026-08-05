@@ -24,8 +24,12 @@ software-engineering-skills/
 │       │   ├── service.test.conf nginx vhost 模板（test 环境，HTTPS/域名）
 │       │   └── service.prod.conf nginx vhost 模板（prod 环境，HTTPS/域名）
 │       ├── supervisor/
-│       │   └── service.ini       supervisord 程序配置模板
-│       └── env.example           环境变量模板（数据库连接、JWT 密钥等）
+│       │   ├── service.dev.ini   supervisord 程序配置模板（dev，--spring.profiles.active=dev）
+│       │   ├── service.test.ini  supervisord 程序配置模板（test）
+│       │   └── service.prod.ini  supervisord 程序配置模板（prod）
+│       ├── env.dev.example       环境变量模板（dev，JWT 可用占位符）
+│       ├── env.test.example      环境变量模板（test，建议随机 JWT）
+│       └── env.prod.example      环境变量模板（prod，JWT 必须真实值）
 └── .claude/
     └── skills/
         └── new-java-project.md   Claude Code skill 定义
@@ -62,8 +66,8 @@ software-engineering-skills/
 | `deploy-conf/nginx/<name>.dev.conf` | nginx vhost — dev 环境（HTTP，无域名） |
 | `deploy-conf/nginx/<name>.test.conf` | nginx vhost — test 环境（HTTPS，绑定测试域名） |
 | `deploy-conf/nginx/<name>.prod.conf` | nginx vhost — prod 环境（HTTPS，绑定生产域名） |
-| `deploy-conf/supervisor/<name>.ini` | supervisord 程序配置（`startsecs=3`，日志合并写入） |
-| `deploy-conf/env.example` | 环境变量模板，复制到 `/opt/soft/apps/<name>/.env` 后填入真实值 |
+| `deploy-conf/supervisor/<name>.{dev,test,prod}.ini` | supervisord 程序配置三套（`--spring.profiles.active` 各自对应环境） |
+| `deploy-conf/env.{dev,test,prod}.example` | 环境变量模板三套（JWT 要求强度依次递增），复制为 `.env` 后填入真实值 |
 | `specs/deployment.md` | 本工程专属部署规范文档 |
 | `specs/baseline-versions.md` | 基线版本规范（JDK、PostgreSQL、Spring Boot 等） |
 
