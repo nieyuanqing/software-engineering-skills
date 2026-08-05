@@ -73,8 +73,8 @@ software-engineering-skills/
 | `deploy-conf/nginx/<name>.prod.conf` | nginx vhost — prod 环境（HTTPS，绑定生产域名） |
 | `deploy-conf/supervisor/<name>.{dev,test,prod}.ini` | supervisord 程序配置三套（`--spring.profiles.active` 各自对应环境） |
 | `deploy-conf/env.{dev,test,prod}.example` | 环境变量模板三套（JWT 要求强度依次递增），复制为 `.env` 后填入真实值 |
-| `src/backend/src/main/resources/application.yml` | Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点） |
-| `src/backend/src/main/resources/application-{dev,test,prod}.yml` | Spring Boot profile 配置三套（日志级别、SQL 调试、Swagger 开关） |
+| `src/backend/<name>/src/main/resources/application.yml` | Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点） |
+| `src/backend/<name>/src/main/resources/application-{dev,test,prod}.yml` | Spring Boot profile 配置三套（日志级别、SQL 调试、Swagger 开关） |
 | `specs/deployment.md` | 本工程专属部署规范文档 |
 | `specs/baseline-versions.md` | 基线版本规范（JDK、PostgreSQL、Spring Boot 等） |
 

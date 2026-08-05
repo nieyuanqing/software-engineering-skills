@@ -58,7 +58,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 #   scripts/ — 怎么部署（脚本逻辑）
 #   deploy-conf/ — 部署成什么样（静态配置文件，提前生成好纳入版本管理）
 DEPLOY_CONF_DIR="${PROJECT_ROOT}/deploy-conf"
-BACKEND_DIR="${PROJECT_ROOT}/src/backend"
+BACKEND_DIR="${PROJECT_ROOT}/src/backend/${SERVICE_NAME}"
 WEB_DIR="${PROJECT_ROOT}/src/web"
 
 APP_DIR="/opt/soft/apps/${SERVICE_NAME}"

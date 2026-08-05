@@ -50,10 +50,10 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
     - deploy-conf/env.dev.example             环境变量模板（dev 环境，JWT 可用占位符）
     - deploy-conf/env.test.example            环境变量模板（test 环境，建议随机 JWT）
     - deploy-conf/env.prod.example            环境变量模板（prod 环境，JWT 必须真实值）
-    - src/backend/src/main/resources/application.yml          Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
-    - src/backend/src/main/resources/application-dev.yml      dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
-    - src/backend/src/main/resources/application-test.yml     test profile（INFO 日志，Swagger 开启）
-    - src/backend/src/main/resources/application-prod.yml     prod profile（WARN 日志，Swagger 关闭）
+    - src/backend/<name>/src/main/resources/application.yml          Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
+    - src/backend/<name>/src/main/resources/application-dev.yml      dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
+    - src/backend/<name>/src/main/resources/application-test.yml     test profile（INFO 日志，Swagger 开启）
+    - src/backend/<name>/src/main/resources/application-prod.yml     prod profile（WARN 日志，Swagger 关闭）
     - specs/deployment.md                  本工程专属部署规范文档
     - specs/baseline-versions.md           基线版本规范（JDK、PostgreSQL、Spring Boot 等）
 
@@ -159,10 +159,10 @@ deploy-conf/supervisor/<SERVICE_NAME>.prod.ini
 deploy-conf/env.dev.example
 deploy-conf/env.test.example
 deploy-conf/env.prod.example
-src/backend/src/main/resources/application.yml
-src/backend/src/main/resources/application-dev.yml
-src/backend/src/main/resources/application-test.yml
-src/backend/src/main/resources/application-prod.yml
+src/backend/<SERVICE_NAME>/src/main/resources/application.yml
+src/backend/<SERVICE_NAME>/src/main/resources/application-dev.yml
+src/backend/<SERVICE_NAME>/src/main/resources/application-test.yml
+src/backend/<SERVICE_NAME>/src/main/resources/application-prod.yml
 specs/deployment.md
 specs/baseline-versions.md
 ```
@@ -203,10 +203,10 @@ specs/baseline-versions.md
 | `deploy-conf/env.dev.example` | `software-engineering-skills/templates/deploy-conf/env.dev.example` |
 | `deploy-conf/env.test.example` | `software-engineering-skills/templates/deploy-conf/env.test.example` |
 | `deploy-conf/env.prod.example` | `software-engineering-skills/templates/deploy-conf/env.prod.example` |
-| `src/backend/src/main/resources/application.yml` | `software-engineering-skills/templates/src/main/resources/application.yml` |
-| `src/backend/src/main/resources/application-dev.yml` | `software-engineering-skills/templates/src/main/resources/application-dev.yml` |
-| `src/backend/src/main/resources/application-test.yml` | `software-engineering-skills/templates/src/main/resources/application-test.yml` |
-| `src/backend/src/main/resources/application-prod.yml` | `software-engineering-skills/templates/src/main/resources/application-prod.yml` |
+| `src/backend/<SERVICE_NAME>/src/main/resources/application.yml` | `software-engineering-skills/templates/src/main/resources/application.yml` |
+| `src/backend/<SERVICE_NAME>/src/main/resources/application-dev.yml` | `software-engineering-skills/templates/src/main/resources/application-dev.yml` |
+| `src/backend/<SERVICE_NAME>/src/main/resources/application-test.yml` | `software-engineering-skills/templates/src/main/resources/application-test.yml` |
+| `src/backend/<SERVICE_NAME>/src/main/resources/application-prod.yml` | `software-engineering-skills/templates/src/main/resources/application-prod.yml` |
 | `specs/deployment.md` | `software-engineering-skills/specs/deployment-template.md` |
 | `specs/baseline-versions.md` | `software-engineering-skills/specs/baseline-versions-template.md` |
 
