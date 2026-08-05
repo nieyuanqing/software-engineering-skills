@@ -77,17 +77,11 @@ software-engineering-skills/
 
 ## 安装
 
-skill 已通过符号链接安装到全局，任意工程均可直接调用：
+在新机器上克隆仓库后安装：
 
 ```bash
-ls -la ~/.claude/skills/new-java-project/SKILL.md
-# -> /data/workspace/software-engineering-skills/.claude/skills/new-java-project.md
-```
-
-如需在新机器上安装：
-
-```bash
+git clone https://github.com/nieyuanqing/software-engineering-skills.git ~/software-engineering-skills
 mkdir -p ~/.claude/skills/new-java-project
-ln -sf /data/workspace/software-engineering-skills/.claude/skills/new-java-project.md \
+ln -sf ~/software-engineering-skills/.claude/skills/new-java-project.md \
        ~/.claude/skills/new-java-project/SKILL.md
 ```
