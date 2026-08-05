@@ -1,0 +1,33 @@
+# Claude Code 运行时文件（本机私有，不纳入版本管理）
+.claude/settings.local.json
+.claude/cache/
+.claude/history.jsonl
+.claude/paste-cache/
+.claude/plans/
+.claude/sessions/
+.claude/shell-snapshots/
+.claude/tasks/
+.claude/projects/
+.claude/session-env/
+.claude/backups/
+.claude/file-history/
+
+# .claude/skills/ 是本工程的核心产出，纳入版本管理（不在此排除）
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 编辑器 / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 日志
+*.log
+
+# 临时文件
+*.tmp
+*.bak
