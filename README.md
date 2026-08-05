@@ -18,18 +18,23 @@ software-engineering-skills/
 │   ├── scripts/
 │   │   ├── deploy.sh             部署脚本模板（backend/web/all 三个 target，含健康检查）
 │   │   └── apply-ssl.sh          SSL 证书申请脚本模板（Let's Encrypt + acme.sh）
-│   └── deploy-conf/
-│       ├── nginx/
-│       │   ├── service.dev.conf  nginx vhost 模板（dev 环境，HTTP/IP+端口）
-│       │   ├── service.test.conf nginx vhost 模板（test 环境，HTTPS/域名）
-│       │   └── service.prod.conf nginx vhost 模板（prod 环境，HTTPS/域名）
-│       ├── supervisor/
-│       │   ├── service.dev.ini   supervisord 程序配置模板（dev，--spring.profiles.active=dev）
-│       │   ├── service.test.ini  supervisord 程序配置模板（test）
-│       │   └── service.prod.ini  supervisord 程序配置模板（prod）
-│       ├── env.dev.example       环境变量模板（dev，JWT 可用占位符）
-│       ├── env.test.example      环境变量模板（test，建议随机 JWT）
-│       └── env.prod.example      环境变量模板（prod，JWT 必须真实值）
+│   ├── deploy-conf/
+│   │   ├── nginx/
+│   │   │   ├── service.dev.conf  nginx vhost 模板（dev 环境，HTTP/IP+端口）
+│   │   │   ├── service.test.conf nginx vhost 模板（test 环境，HTTPS/域名）
+│   │   │   └── service.prod.conf nginx vhost 模板（prod 环境，HTTPS/域名）
+│   │   ├── supervisor/
+│   │   │   ├── service.dev.ini   supervisord 程序配置模板（dev，--spring.profiles.active=dev）
+│   │   │   ├── service.test.ini  supervisord 程序配置模板（test）
+│   │   │   └── service.prod.ini  supervisord 程序配置模板（prod）
+│   │   ├── env.dev.example       环境变量模板（dev，JWT 可用占位符）
+│   │   ├── env.test.example      环境变量模板（test，建议随机 JWT）
+│   │   └── env.prod.example      环境变量模板（prod，JWT 必须真实值）
+│   └── src/main/resources/
+│       ├── application.yml       Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
+│       ├── application-dev.yml   dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
+│       ├── application-test.yml  test profile（INFO 日志，Swagger 开启）
+│       └── application-prod.yml  prod profile（WARN 日志，Swagger 关闭）
 └── .claude/
     └── skills/
         └── new-java-project.md   Claude Code skill 定义
@@ -68,6 +73,8 @@ software-engineering-skills/
 | `deploy-conf/nginx/<name>.prod.conf` | nginx vhost — prod 环境（HTTPS，绑定生产域名） |
 | `deploy-conf/supervisor/<name>.{dev,test,prod}.ini` | supervisord 程序配置三套（`--spring.profiles.active` 各自对应环境） |
 | `deploy-conf/env.{dev,test,prod}.example` | 环境变量模板三套（JWT 要求强度依次递增），复制为 `.env` 后填入真实值 |
+| `src/backend/src/main/resources/application.yml` | Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点） |
+| `src/backend/src/main/resources/application-{dev,test,prod}.yml` | Spring Boot profile 配置三套（日志级别、SQL 调试、Swagger 开关） |
 | `specs/deployment.md` | 本工程专属部署规范文档 |
 | `specs/baseline-versions.md` | 基线版本规范（JDK、PostgreSQL、Spring Boot 等） |
 
