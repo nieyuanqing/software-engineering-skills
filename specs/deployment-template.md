@@ -52,9 +52,13 @@ PostgreSQL <DB_PORT>（本机私有实例）
 | `prod` | 独立机器 | `<PROD_DOMAIN>`，HTTPS | 生产 |
 
 对应的 nginx vhost 是提前生成好的静态文件：
-- `deploy-conf/nginx/<SERVICE_NAME>.dev.conf`
-- `deploy-conf/nginx/<SERVICE_NAME>.test.conf`（`server_name <TEST_DOMAIN>`）
-- `deploy-conf/nginx/<SERVICE_NAME>.prod.conf`（`server_name <PROD_DOMAIN>`）
+- `deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf`
+- `deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf`（`server_name <TEST_DOMAIN>`）
+- `deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf`（`server_name <PROD_DOMAIN>`）
+
+`deploy-conf/nginx/` 下除 `vhosts/`（本服务专属，由 `/new-java-project` 生成）之外的其余内容
+（`nginx.conf`、`subconf/`、`mime.types` 等）是主机级共享 nginx 基础配置，由 `/new-nginx-conf`
+生成，通常整台主机只需要生成一次，不随每个服务重复生成。
 
 首次在 test/prod 机器上部署：
 1. 确认域名已经解析到这台机器

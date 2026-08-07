@@ -84,7 +84,7 @@ usage() {
   --target=all       backend + web 依次执行，nginx 统一 reload 一次
 
 环境（--env 缺省为 dev，决定装哪份 nginx vhost）：
-  --env=dev          （默认）无域名/HTTP，deploy-conf/nginx/${SERVICE_NAME}.dev.conf
+  --env=dev          （默认）无域名/HTTP，deploy-conf/nginx/vhosts/${SERVICE_NAME}.dev.conf
   --env=test         域名 + HTTPS，证书需先用 scripts/apply-ssl.sh test 申请
   --env=prod         域名 + HTTPS，证书需先用 scripts/apply-ssl.sh prod 申请
 
@@ -274,7 +274,7 @@ do_remove() {
 # 装哪份 vhost 由 --env 决定：dev 无域名/HTTP，test/prod 域名+HTTPS（各自独立机器）。
 # test/prod 需要先跑 scripts/apply-ssl.sh 申请好证书，本函数只装 vhost，不申请证书。
 install_nginx_vhost() {
-	local nginx_conf_src="${DEPLOY_CONF_DIR}/nginx/${SERVICE_NAME}.${ENV}.conf"
+	local nginx_conf_src="${DEPLOY_CONF_DIR}/nginx/vhosts/${SERVICE_NAME}.${ENV}.conf"
 	if [ ! -x "${NGINX_BIN}" ]; then
 		echo "未找到 nginx 可执行文件: ${NGINX_BIN}" >&2
 		exit 1
@@ -310,7 +310,7 @@ detect_external_ip() {
 
 access_url() {
 	local path="$1"
-	# test/prod 域名在 deploy-conf/nginx/<SERVICE_NAME>.{test,prod}.conf 的 server_name 是唯一真实来源，
+	# test/prod 域名在 deploy-conf/nginx/vhosts/<SERVICE_NAME>.{test,prod}.conf 的 server_name 是唯一真实来源，
 	# 下方只是打印提示用，改域名时两处要同步。
 	case "${ENV}" in
 	test) echo "https://<TEST_DOMAIN>:${NGINX_PORT}${path}" ;;

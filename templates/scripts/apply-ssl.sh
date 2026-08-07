@@ -22,8 +22,8 @@ set -euo pipefail
 # 项目配置——由 new-service-deploy skill 在初始化时填入
 # ==============================================================================
 SERVICE_NAME="<SERVICE_NAME>"
-TEST_DOMAIN="<TEST_DOMAIN>"   # test 环境域名，与 deploy-conf/nginx/<SERVICE_NAME>.test.conf 的 server_name 保持一致
-PROD_DOMAIN="<PROD_DOMAIN>"   # prod 环境域名，与 deploy-conf/nginx/<SERVICE_NAME>.prod.conf 的 server_name 保持一致
+TEST_DOMAIN="<TEST_DOMAIN>"   # test 环境域名，与 deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf 的 server_name 保持一致
+PROD_DOMAIN="<PROD_DOMAIN>"   # prod 环境域名，与 deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf 的 server_name 保持一致
 # ==============================================================================
 
 CERT_DIR="/opt/soft/nginx/ssl"
@@ -48,7 +48,7 @@ issue_cert() {
 	local domain
 
 	case "$env" in
-	# 域名需要和对应的 deploy-conf/nginx/<SERVICE_NAME>.$env.conf 里的 server_name 保持一致
+	# 域名需要和对应的 deploy-conf/nginx/vhosts/<SERVICE_NAME>.$env.conf 里的 server_name 保持一致
 	test) domain="${TEST_DOMAIN}" ;;
 	prod) domain="${PROD_DOMAIN}" ;;
 	*) fail "未知环境: $env；可选值: test, prod" ;;

@@ -45,7 +45,7 @@
 
 | 用途 | 端口 | 说明 |
 |---|---|---|
-| nginx 对外反向代理 | `<NGINX_PORT>` | 唯一对外入口，见 `deploy-conf/nginx/<SERVICE_NAME>.conf` |
+| nginx 对外反向代理 | `<NGINX_PORT>` | 唯一对外入口，见 `deploy-conf/nginx/vhosts/<SERVICE_NAME>.conf` |
 | Spring Boot 应用内部监听 | `<APP_PORT>` | 只绑定 `127.0.0.1`，不直接对外暴露，必须经 nginx 访问（见 `application.yml` 的 `server.address`） |
 
 这两个端口是固定值，变更需先确认目标机器端口占用情况，走第五节升级流程更新本表，不允许部署时临时改动而不回写文档。

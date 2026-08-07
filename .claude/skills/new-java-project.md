@@ -41,9 +41,9 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
   为 Java/Spring Boot 工程生成完整的标准化部署配置，包括：
     - scripts/deploy.sh                    部署脚本（构建 jar、supervisord 管理、健康检查、nginx 安装）
     - scripts/apply-ssl.sh                 SSL 证书申请脚本（Let's Encrypt + acme.sh）
-    - deploy-conf/nginx/<name>.dev.conf    nginx vhost（dev 环境，HTTP/IP+端口）
-    - deploy-conf/nginx/<name>.test.conf   nginx vhost（test 环境，HTTPS/域名）
-    - deploy-conf/nginx/<name>.prod.conf   nginx vhost（prod 环境，HTTPS/域名）
+    - deploy-conf/nginx/vhosts/<name>.dev.conf    nginx vhost（dev 环境，HTTP/IP+端口）
+    - deploy-conf/nginx/vhosts/<name>.test.conf   nginx vhost（test 环境，HTTPS/域名）
+    - deploy-conf/nginx/vhosts/<name>.prod.conf   nginx vhost（prod 环境，HTTPS/域名）
     - deploy-conf/supervisor/<name>.dev.ini   supervisord 程序配置（dev 环境，--spring.profiles.active=dev）
     - deploy-conf/supervisor/<name>.test.ini  supervisord 程序配置（test 环境）
     - deploy-conf/supervisor/<name>.prod.ini  supervisord 程序配置（prod 环境）
@@ -145,14 +145,16 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 
 ## 二、生成文件清单
 
-以下文件全部在**目标工程根目录**下生成（即用户当前在操作的工程，不是 software-engineering-skills 仓库本身）：
+以下文件全部在**目标工程根目录**下生成（即用户当前在操作的工程，不是 software-engineering-skills 仓库本身）。
+`deploy-conf/nginx/vhosts/` 之外的 `deploy-conf/nginx/`（`nginx.conf`、`subconf/` 等主机级基础配置）
+属于 `/new-nginx-conf` skill，本 skill 不生成、不覆盖：
 
 ```
 scripts/deploy.sh
 scripts/apply-ssl.sh
-deploy-conf/nginx/<SERVICE_NAME>.dev.conf
-deploy-conf/nginx/<SERVICE_NAME>.test.conf
-deploy-conf/nginx/<SERVICE_NAME>.prod.conf
+deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf
+deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf
+deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf
 deploy-conf/supervisor/<SERVICE_NAME>.dev.ini
 deploy-conf/supervisor/<SERVICE_NAME>.test.ini
 deploy-conf/supervisor/<SERVICE_NAME>.prod.ini
@@ -194,9 +196,9 @@ specs/baseline-versions.md
 |---|---|
 | `scripts/deploy.sh` | `software-engineering-skills/templates/scripts/deploy.sh` |
 | `scripts/apply-ssl.sh` | `software-engineering-skills/templates/scripts/apply-ssl.sh` |
-| `deploy-conf/nginx/<SERVICE_NAME>.dev.conf` | `software-engineering-skills/templates/deploy-conf/nginx/service.dev.conf` |
-| `deploy-conf/nginx/<SERVICE_NAME>.test.conf` | `software-engineering-skills/templates/deploy-conf/nginx/service.test.conf` |
-| `deploy-conf/nginx/<SERVICE_NAME>.prod.conf` | `software-engineering-skills/templates/deploy-conf/nginx/service.prod.conf` |
+| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.dev.conf` |
+| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.test.conf` |
+| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.prod.conf` |
 | `deploy-conf/supervisor/<SERVICE_NAME>.dev.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.dev.ini` |
 | `deploy-conf/supervisor/<SERVICE_NAME>.test.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.test.ini` |
 | `deploy-conf/supervisor/<SERVICE_NAME>.prod.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.prod.ini` |
