@@ -103,33 +103,68 @@ backend 选项（需要 sudo）：
 web 选项（需要 sudo）：
   --no-nginx         只更新静态资源目录，不改动共享 nginx 配置
 
+  -t, --target VALUE 同 --target=VALUE（空格分隔写法）
+  -e, --env VALUE    同 --env=VALUE（空格分隔写法）
   -h, --help         显示本帮助
 EOF
 }
 
-for arg in "$@"; do
-	case "${arg}" in
-	--target=backend) TARGET="backend" ;;
-	--target=web) TARGET="web" ;;
-	--target=all) TARGET="all" ;;
-	--env=dev) ENV="dev" ;;
-	--env=test) ENV="test" ;;
-	--env=prod) ENV="prod" ;;
-	--no-nginx) INSTALL_NGINX=false ;;
-	--stop) ACTION="stop" ;;
-	--remove) ACTION="remove" ;;
-	--rollback) ACTION="rollback" ;;
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	-t | --target)
+		[ "$#" -ge 2 ] || {
+			echo "$1 缺少参数" >&2
+			usage >&2
+			exit 1
+		}
+		case "$2" in
+		backend | web | all) TARGET="$2" ;;
+		*)
+			echo "--target 可选值: backend, web, all（实际: $2）" >&2
+			usage >&2
+			exit 1
+			;;
+		esac
+		shift 2
+		;;
+	--target=backend) TARGET="backend" && shift ;;
+	--target=web) TARGET="web" && shift ;;
+	--target=all) TARGET="all" && shift ;;
+	-e | --env)
+		[ "$#" -ge 2 ] || {
+			echo "$1 缺少参数" >&2
+			usage >&2
+			exit 1
+		}
+		case "$2" in
+		dev | test | prod) ENV="$2" ;;
+		*)
+			echo "--env 可选值: dev, test, prod（实际: $2）" >&2
+			usage >&2
+			exit 1
+			;;
+		esac
+		shift 2
+		;;
+	--env=dev) ENV="dev" && shift ;;
+	--env=test) ENV="test" && shift ;;
+	--env=prod) ENV="prod" && shift ;;
+	--no-nginx) INSTALL_NGINX=false && shift ;;
+	--stop) ACTION="stop" && shift ;;
+	--remove) ACTION="remove" && shift ;;
+	--rollback) ACTION="rollback" && shift ;;
 	--rollback=*)
 		ACTION="rollback"
-		ROLLBACK_VERSION="${arg#*=}"
+		ROLLBACK_VERSION="${1#*=}"
+		shift
 		;;
-	--yes) SKIP_CONFIRM=true ;;
+	--yes) SKIP_CONFIRM=true && shift ;;
 	-h | --help)
 		usage
 		exit 0
 		;;
 	*)
-		echo "未知参数: ${arg}" >&2
+		echo "未知参数: $1" >&2
 		usage >&2
 		exit 1
 		;;
