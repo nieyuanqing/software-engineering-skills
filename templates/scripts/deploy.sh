@@ -23,6 +23,8 @@
 #   sudo scripts/deploy.sh --stop               只停止服务，不删除任何部署文件
 #   sudo scripts/deploy.sh --remove             完全移除（停止 + 删 supervisord 配置 + 删 nginx vhost）
 #   sudo scripts/deploy.sh --remove --yes       同上，跳过二次确认
+#   sudo scripts/deploy.sh --rollback           回滚到上一个已部署的 jar 版本（不重新构建）
+#   sudo scripts/deploy.sh --rollback=1.2.0     回滚到指定版本（要求该版本 jar 仍在 APP_DIR 中）
 #
 # 用法（web 目标，需要 sudo）：
 #   sudo scripts/deploy.sh --target=web              构建 + 部署静态资源，同时安装/重载 nginx（--env=dev）
@@ -73,6 +75,7 @@ ACTION="deploy"
 ENV="dev"
 INSTALL_NGINX=true
 SKIP_CONFIRM=false
+ROLLBACK_VERSION=""
 
 usage() {
 	cat <<EOF
@@ -93,6 +96,9 @@ backend 选项（需要 sudo）：
   --stop             只停止服务，不删除任何部署文件
   --remove           完全移除（停止 + 删 supervisord 配置 + 删 nginx vhost + reload）
   --yes              配合 --remove 跳过二次确认
+  --rollback[=VERSION]
+                     回滚到上一个（或指定）已部署的 jar 版本，不重新构建，回滚后重启并走健康检查。
+                     可回滚版本 = ${APP_DIR}/${SERVICE_NAME}-*.jar 中仍保留的历史文件（见下方版本化部署说明）
 
 web 选项（需要 sudo）：
   --no-nginx         只更新静态资源目录，不改动共享 nginx 配置
@@ -112,6 +118,11 @@ for arg in "$@"; do
 	--no-nginx) INSTALL_NGINX=false ;;
 	--stop) ACTION="stop" ;;
 	--remove) ACTION="remove" ;;
+	--rollback) ACTION="rollback" ;;
+	--rollback=*)
+		ACTION="rollback"
+		ROLLBACK_VERSION="${arg#*=}"
+		;;
 	--yes) SKIP_CONFIRM=true ;;
 	-h | --help)
 		usage
@@ -144,8 +155,10 @@ require_cmd() {
 if [ "${TARGET}" = "backend" ] || [ "${TARGET}" = "all" ]; then
 	require_cmd supervisorctl
 	require_cmd curl
-	require_cmd mvn
-	require_cmd java
+	if [ "${ACTION}" = "deploy" ]; then
+		require_cmd mvn
+		require_cmd java
+	fi
 fi
 
 if [ "${TARGET}" = "web" ] || [ "${TARGET}" = "all" ]; then
@@ -319,6 +332,32 @@ access_url() {
 	esac
 }
 
+# ── 部署摘要（backend/web/all 共用，见下方各 dispatch 分支调用）────────────────
+# DEPLOYED_JAR_NAME 由 do_deploy()/do_rollback() 设置；kind 决定展示哪些区块。
+DEPLOYED_JAR_NAME=""
+print_summary() {
+	local kind="$1" # backend | web | all
+	echo
+	echo "══════════════════════ 部署摘要 ══════════════════════"
+	echo "  环境        : ${ENV}"
+	if [ "${kind}" = "backend" ] || [ "${kind}" = "all" ]; then
+		echo "  服务名      : ${SERVICE_NAME}"
+		if [ -n "${DEPLOYED_JAR_NAME}" ]; then
+			echo "  应用 JAR    : ${APP_DIR}/${DEPLOYED_JAR_NAME}（软链接 ${SERVICE_NAME}.jar -> 该文件）"
+		fi
+		echo "  内部端口    : 127.0.0.1:${APP_PORT}（不对外暴露）"
+		echo "  日志        : tail -f ${LOG_DIR}/supervisord.log"
+		echo "  进程状态    : supervisorctl status ${SERVICE_NAME}"
+	fi
+	if [ "${kind}" = "web" ] || [ "${kind}" = "all" ]; then
+		echo "  前端静态资源: ${WEB_APP_DIR}"
+	fi
+	if [ "${INSTALL_NGINX}" = true ]; then
+		echo "  对外访问    : $(access_url "/api/${SERVICE_NAME}/health")"
+	fi
+	echo "══════════════════════════════════════════════════════"
+}
+
 do_deploy() {
 	preflight_checks
 
@@ -332,9 +371,15 @@ do_deploy() {
 	fi
 	info "构建产物: ${JAR_FILE}"
 
-	step "2/6 部署 jar 到 ${APP_DIR}"
+	step "2/6 部署 jar 到 ${APP_DIR}（版本化文件名 + 软链接，保留上一版本用于 --rollback）"
 	mkdir -p "${APP_DIR}" "${LOG_DIR}"
-	cp "${JAR_FILE}" "${APP_DIR}/${SERVICE_NAME}.jar"
+	# JAR_FILE 文件名本身已带版本号（Maven 标准命名 <artifactId>-<version>.jar），
+	# 原样拷贝保留版本文件，再用软链接 ${SERVICE_NAME}.jar 指向它——supervisord 配置固定
+	# 引用软链接名，回滚时只需重新指向旧版本文件，不需要改 supervisord 配置或重新构建。
+	DEPLOYED_JAR_NAME="$(basename "${JAR_FILE}")"
+	cp "${JAR_FILE}" "${APP_DIR}/${DEPLOYED_JAR_NAME}"
+	ln -sfn "${DEPLOYED_JAR_NAME}" "${APP_DIR}/${SERVICE_NAME}.jar"
+	info "已部署: ${APP_DIR}/${DEPLOYED_JAR_NAME}"
 
 	step "3/6 写入 supervisord 配置 ${SUPERVISOR_CONF}"
 	# 从 deploy-conf/supervisor/<SERVICE_NAME>.${ENV}.ini 拷贝，不在部署时用 heredoc 现场拼接——
@@ -358,13 +403,46 @@ do_deploy() {
 	fi
 
 	step "部署完成"
-	info "应用部署路径: ${APP_DIR}/${SERVICE_NAME}.jar"
-	info "应用内部端口: 127.0.0.1:${APP_PORT}（不对外暴露）"
-	if [ "${INSTALL_NGINX}" = true ]; then
-		info "对外访问端口: ${NGINX_PORT}（经 nginx 反向代理，如 $(access_url "/api/${SERVICE_NAME}/health")）"
+}
+
+# ── 回滚（backend 专用，见用法 --rollback[=VERSION]）─────────────────────────
+# 不重新构建：把 ${SERVICE_NAME}.jar 软链接重新指向 APP_DIR 里仍保留的旧版本 jar，
+# 重启后走一次完整健康检查——回滚失败（健康检查不过）会以非零退出码中止，不会
+# 静默停留在半回滚状态。
+do_rollback() {
+	step "1/3 定位回滚目标版本"
+	local current_jar target_jar target_name
+	current_jar="$(readlink -f "${APP_DIR}/${SERVICE_NAME}.jar" 2>/dev/null || true)"
+
+	if [ -n "${ROLLBACK_VERSION}" ]; then
+		target_jar="${APP_DIR}/${SERVICE_NAME}-${ROLLBACK_VERSION}.jar"
+		[ -f "${target_jar}" ] || {
+			echo "未找到指定版本: ${target_jar}" >&2
+			exit 1
+		}
+	else
+		# 按修改时间取当前版本之外最近的一个历史 jar
+		target_jar="$(find "${APP_DIR}" -maxdepth 1 -name "${SERVICE_NAME}-*.jar" ! -samepath "${current_jar}" -printf '%T@ %p\n' 2>/dev/null |
+			sort -rn | head -n1 | cut -d' ' -f2-)"
+		[ -n "${target_jar}" ] || {
+			echo "未找到可回滚的历史版本（${APP_DIR}/${SERVICE_NAME}-*.jar 下没有当前版本之外的文件）" >&2
+			exit 1
+		}
 	fi
-	info "查看日志: tail -f ${LOG_DIR}/supervisord.log"
-	info "查看进程状态: supervisorctl status ${SERVICE_NAME}"
+	target_name="$(basename "${target_jar}")"
+	info "当前版本: $(basename "${current_jar:-（未部署）}")"
+	info "回滚到  : ${target_name}"
+
+	step "2/3 重新指向软链接并重启"
+	ln -sfn "${target_name}" "${APP_DIR}/${SERVICE_NAME}.jar"
+	DEPLOYED_JAR_NAME="${target_name}"
+	supervisorctl restart "${SERVICE_NAME}" 2>/dev/null || supervisorctl start "${SERVICE_NAME}"
+	supervisorctl status "${SERVICE_NAME}"
+
+	step "3/3 健康检查（${HEALTH_URL}，最长等待 ${HEALTH_TIMEOUT_SECONDS} 秒）"
+	wait_for_health
+
+	step "回滚完成"
 }
 
 do_web_build_and_deploy() {
@@ -391,18 +469,28 @@ do_web_build_and_deploy() {
 
 if [ "${TARGET}" = "backend" ]; then
 	case "${ACTION}" in
-	deploy) do_deploy ;;
+	deploy)
+		do_deploy
+		print_summary "backend"
+		;;
 	stop) do_stop ;;
 	remove) do_remove ;;
+	rollback)
+		do_rollback
+		print_summary "backend"
+		;;
 	esac
 	exit 0
 fi
 
 if [ "${TARGET}" = "web" ]; then
 	case "${ACTION}" in
-	deploy) do_web_build_and_deploy ;;
-	stop | remove)
-		info "--target=web 没有\"停止/移除\"的概念（只是静态构建产物），忽略 ${ACTION}"
+	deploy)
+		do_web_build_and_deploy
+		print_summary "web"
+		;;
+	stop | remove | rollback)
+		info "--target=web 没有\"停止/移除/回滚\"的概念（只是静态构建产物），忽略 ${ACTION}"
 		;;
 	esac
 	exit 0
@@ -418,9 +506,7 @@ if [ "${TARGET}" = "all" ]; then
 			install_nginx_vhost
 		fi
 		step "全量部署完成"
-		info "后端应用: ${APP_DIR}/${SERVICE_NAME}.jar"
-		info "前端静态资源: ${WEB_APP_DIR}"
-		info "对外访问: $(access_url "/")"
+		print_summary "all"
 		;;
 	stop)
 		info "--target=all 的 --stop 只作用于 backend（web 只是构建产物，没有"停止"的概念）"
@@ -429,6 +515,11 @@ if [ "${TARGET}" = "all" ]; then
 	remove)
 		info "--target=all 的 --remove 只作用于 backend（web 只是构建产物，没有"移除"的概念）"
 		do_remove
+		;;
+	rollback)
+		info "--target=all 的 --rollback 只作用于 backend（web 只是构建产物，没有"回滚"的概念）"
+		do_rollback
+		print_summary "backend"
 		;;
 	esac
 	exit 0

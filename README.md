@@ -28,7 +28,7 @@ software-engineering-skills/
 │                                      （JDK、PostgreSQL、Spring Boot 等基线版本）
 ├── templates/
 │   ├── scripts/
-│   │   ├── deploy.sh             部署脚本模板（backend/web/all 三个 target，含健康检查）
+│   │   ├── deploy.sh             部署脚本模板（backend/web/all 三个 target，含健康检查、版本化 jar + --rollback 回滚、结构化部署摘要）
 │   │   └── apply-ssl.sh          SSL 证书申请脚本模板（Let's Encrypt + acme.sh）
 │   ├── deploy-conf/
 │   │   ├── nginx/                 nginx 配置目录（/new-nginx-conf 与 /new-java-project 共用）
@@ -88,7 +88,7 @@ software-engineering-skills/
 
 | 文件 | 说明 |
 |---|---|
-| `scripts/deploy.sh` | 部署脚本（构建 jar、supervisord 管理、健康检查轮询、nginx 安装） |
+| `scripts/deploy.sh` | 部署脚本（构建 jar、版本化部署 + `--rollback` 回滚、supervisord 管理、健康检查轮询、nginx 安装、结构化部署摘要） |
 | `scripts/apply-ssl.sh` | SSL 证书申请（Let's Encrypt + acme.sh，HTTP-01 webroot 验证） |
 | `deploy-conf/nginx/vhosts/<name>.dev.conf` | nginx vhost — dev 环境（HTTP，无域名） |
 | `deploy-conf/nginx/vhosts/<name>.test.conf` | nginx vhost — test 环境（HTTPS，绑定测试域名） |
