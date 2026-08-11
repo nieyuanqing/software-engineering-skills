@@ -1,561 +1,719 @@
-#!/usr/bin/env bash
-# <SERVICE_NAME> —— 本地构建/部署脚本
-#
-# 用 --target 区分构建/部署目标（不加 --target 时默认 backend）：
-#   - backend（默认）：处理后端服务——用 supervisord 管理 Java 进程，通过 nginx 反向代理对外访问
-#   - web：构建 src/web 静态资源并部署，通过共享 nginx 的指定 location 对外提供
-#   - all：backend + web 依次执行，nginx 只 reload 一次
-#
-# 用 --env 区分部署环境（不加 --env 时默认 dev）：
-#   - dev（默认）：无域名，HTTP，用 IP+端口直接访问
-#   - test：独立机器，绑定测试域名 + HTTPS，证书需先用 scripts/apply-ssl.sh test 申请
-#   - prod：独立机器，绑定生产域名 + HTTPS，证书需先用 scripts/apply-ssl.sh prod 申请
-#
-# 具体规范见：
-#   - specs/deployment.md         本工程专属的部署细节
-#   - specs/deployment-common.md  跨项目通用的主机操作规范（或引用 software-engineering-skills 仓库）
-#
-# 用法（backend 目标，默认，需要 sudo）：
-#   sudo scripts/deploy.sh                     构建 + 部署 + 启动，安装 nginx（--env=dev）
-#   sudo scripts/deploy.sh --env=test           同上，装 test 环境域名+HTTPS 的 nginx 配置
-#   sudo scripts/deploy.sh --env=prod           同上，装 prod 环境域名+HTTPS 的 nginx 配置
-#   sudo scripts/deploy.sh --no-nginx           只处理 supervisord 管理的服务本身，不改动共享 nginx
-#   sudo scripts/deploy.sh --stop               只停止服务，不删除任何部署文件
-#   sudo scripts/deploy.sh --remove             完全移除（停止 + 删 supervisord 配置 + 删 nginx vhost）
-#   sudo scripts/deploy.sh --remove --yes       同上，跳过二次确认
-#   sudo scripts/deploy.sh --rollback           回滚到上一个已部署的 jar 版本（不重新构建）
-#   sudo scripts/deploy.sh --rollback=1.2.0     回滚到指定版本（要求该版本 jar 仍在 APP_DIR 中）
-#
-# 用法（web 目标，需要 sudo）：
-#   sudo scripts/deploy.sh --target=web              构建 + 部署静态资源，同时安装/重载 nginx（--env=dev）
-#   sudo scripts/deploy.sh --target=web --no-nginx    只更新静态资源目录，不动 nginx
-#
-# 用法（all 目标，需要 sudo）：
-#   sudo scripts/deploy.sh --target=all             backend + web，nginx 统一 reload 一次
-
+#!/bin/bash
+# <SERVICE_NAME> 部署脚本
+# 支持本地和远程（SSH）部署，后端 JAR 由 supervisord 管理，通过 nginx 反向代理对外访问。
+# 规范参考：specs/deployment.md（本工程）、specs/deployment-common.md（跨项目通用）
 set -euo pipefail
 
 # ==============================================================================
-# 项目配置——由 new-service-deploy skill 在初始化时填入，后续不应频繁改动。
-# 端口变更需走 specs/deployment-common.md 第二节「端口分配总表」的登记流程。
+# 服务配置（由 /new-java-project skill 初始化时填入）
+# 端口变更需更新 specs/deployment-common.md 的端口分配总表
 # ==============================================================================
-SERVICE_NAME="<SERVICE_NAME>"      # 服务名（小写字母+连字符，与 supervisord/nginx/数据库名保持一致）
-APP_PORT=<APP_PORT>                # Spring Boot 内部监听端口（只绑 127.0.0.1，不对外暴露）
-NGINX_PORT=<NGINX_PORT>            # nginx 对外监听端口
-DB_HOST="127.0.0.1"
-DB_PORT=<DB_PORT>                  # PostgreSQL 端口
-DB_NAME="<DB_NAME>"               # 数据库名（通常与 SERVICE_NAME 相同）
+APP_PORT=<APP_PORT>        # Spring Boot 内部监听端口（只绑 127.0.0.1，不对外暴露）
+NGINX_PORT=<NGINX_PORT>    # nginx 对外监听端口
 # ==============================================================================
 
-# 健康检查端点（见 specs/deployment-common.md 第六节）：
-# 统一格式 /api/<service-name>/health，通过 Spring Boot Actuator 实现，
-# 配置 management.endpoints.web.base-path=/api/<service-name>，不使用 /actuator/health。
-HEALTH_URL="http://127.0.0.1:${APP_PORT}/api/${SERVICE_NAME}/health"
-HEALTH_TIMEOUT_SECONDS=60
-HEALTH_POLL_INTERVAL_SECONDS=2
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [deploy.sh] $*"
+}
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# 部署配置文件（nginx vhost、env.example 等）与脚本分开存放：
-#   scripts/ — 怎么部署（脚本逻辑）
-#   deploy-conf/ — 部署成什么样（静态配置文件，提前生成好纳入版本管理）
-DEPLOY_CONF_DIR="${PROJECT_ROOT}/deploy-conf"
-BACKEND_DIR="${PROJECT_ROOT}/src/backend/${SERVICE_NAME}"
-WEB_DIR="${PROJECT_ROOT}/src/web"
+log_step() {
+    echo
+    log "$*"
+}
 
-APP_DIR="/opt/soft/apps/${SERVICE_NAME}"
-LOG_DIR="/data/logs/apps/${SERVICE_NAME}"
-WEB_APP_DIR="${APP_DIR}/web"                            # 前端静态资源部署目录
-SUPERVISOR_CONF="/etc/supervisor/conf.d/${SERVICE_NAME}.ini"
-NGINX_BIN="/opt/soft/nginx/sbin/nginx"
-NGINX_VHOST_DST="/opt/soft/nginx/conf/vhosts/${SERVICE_NAME}.conf"
+fail() {
+    log "错误: $*"
+    echo "[STATUS] ERROR - 部署失败：$*"
+    exit 1
+}
 
-TARGET="backend"
-ACTION="deploy"
-ENV="dev"
-INSTALL_NGINX=true
-SKIP_CONFIRM=false
-ROLLBACK_VERSION=""
+fail_maven_build() {
+    local log_file="$1"
+    log "错误: Maven 构建失败，错误日志如下（最后 120 行）:"
+    tail -n 120 "$log_file" || true
+    echo "[STATUS] ERROR - Maven 构建失败，完整日志: $log_file"
+    exit 1
+}
 
 usage() {
-	cat <<EOF
-用法: $(basename "$0") [选项]
+    cat <<'EOF'
+Usage:
+  bash scripts/deploy.sh [OPTIONS]
 
-目标（--target 缺省为 backend）：
-  --target=backend   （默认）处理后端服务，见下方 backend 选项
-  --target=web       构建部署前端静态资源，见下方 web 选项
-  --target=all       backend + web 依次执行，nginx 统一 reload 一次
+Options:
+  -t, --target all|backend|web|ssl
+                  部署目标。默认: all
+  -e, --env dev|test|prod
+                  目标环境（影响 nginx 配置、SSL 证书和 env 文件选择）。默认: dev
+  -r, --remote USER@HOST
+                  部署到远程服务器（SSH 密钥认证）。本地构建，rsync 上传，远程重启。
+                  示例: root@192.168.1.100
+      --all       同 --target all
+      --backend   同 --target backend
+      --web       同 --target web
+      --ssl       同 --target ssl
+  -y, --yes       跳过二次确认
+  -h, --help      显示本帮助
 
-环境（--env 缺省为 dev，决定装哪份 nginx vhost）：
-  --env=dev          （默认）无域名/HTTP，deploy-conf/nginx/vhosts/${SERVICE_NAME}.dev.conf
-  --env=test         域名 + HTTPS，证书需先用 scripts/apply-ssl.sh test 申请
-  --env=prod         域名 + HTTPS，证书需先用 scripts/apply-ssl.sh prod 申请
+目标说明:
+  backend   Maven 构建 JAR → supervisord 管理 → 同步 nginx 站点配置
+  web       构建前端静态资源（npm）并部署
+  ssl       安装 nginx + SSL 证书配置（需先用 scripts/apply-ssl.sh 申请证书；仅支持 test|prod）
+  all       backend + web（依次执行），ssl 须单独 --target ssl 触发
 
-backend 选项（需要 sudo）：
-  --no-nginx         只处理 supervisord 管理的服务本身，不改动共享 nginx 配置
-  --stop             只停止服务，不删除任何部署文件
-  --remove           完全移除（停止 + 删 supervisord 配置 + 删 nginx vhost + reload）
-  --yes              配合 --remove 跳过二次确认
-  --rollback[=VERSION]
-                     回滚到上一个（或指定）已部署的 jar 版本，不重新构建，回滚后重启并走健康检查。
-                     可回滚版本 = ${APP_DIR}/${SERVICE_NAME}-*.jar 中仍保留的历史文件（见下方版本化部署说明）
+环境说明:
+  dev   无域名，HTTP，IP+端口访问（deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf）
+  test  独立机器，测试域名 + HTTPS（需先申请证书）
+  prod  独立机器，生产域名 + HTTPS（需先申请证书）
 
-web 选项（需要 sudo）：
-  --no-nginx         只更新静态资源目录，不改动共享 nginx 配置
-
-  -t, --target VALUE 同 --target=VALUE（空格分隔写法）
-  -e, --env VALUE    同 --env=VALUE（空格分隔写法）
-  -h, --help         显示本帮助
+示例:
+  bash scripts/deploy.sh
+  bash scripts/deploy.sh --target backend
+  bash scripts/deploy.sh --target backend --env test --remote root@192.168.1.100
+  bash scripts/deploy.sh --target ssl --env test --remote root@192.168.1.100
+  bash scripts/deploy.sh --target ssl --env prod --remote root@192.168.1.100
 EOF
 }
 
-while [ "$#" -gt 0 ]; do
-	case "$1" in
-	-t | --target)
-		[ "$#" -ge 2 ] || {
-			echo "$1 缺少参数" >&2
-			usage >&2
-			exit 1
-		}
-		case "$2" in
-		backend | web | all) TARGET="$2" ;;
-		*)
-			echo "--target 可选值: backend, web, all（实际: $2）" >&2
-			usage >&2
-			exit 1
-			;;
-		esac
-		shift 2
-		;;
-	--target=backend) TARGET="backend" && shift ;;
-	--target=web) TARGET="web" && shift ;;
-	--target=all) TARGET="all" && shift ;;
-	-e | --env)
-		[ "$#" -ge 2 ] || {
-			echo "$1 缺少参数" >&2
-			usage >&2
-			exit 1
-		}
-		case "$2" in
-		dev | test | prod) ENV="$2" ;;
-		*)
-			echo "--env 可选值: dev, test, prod（实际: $2）" >&2
-			usage >&2
-			exit 1
-			;;
-		esac
-		shift 2
-		;;
-	--env=dev) ENV="dev" && shift ;;
-	--env=test) ENV="test" && shift ;;
-	--env=prod) ENV="prod" && shift ;;
-	--no-nginx) INSTALL_NGINX=false && shift ;;
-	--stop) ACTION="stop" && shift ;;
-	--remove) ACTION="remove" && shift ;;
-	--rollback) ACTION="rollback" && shift ;;
-	--rollback=*)
-		ACTION="rollback"
-		ROLLBACK_VERSION="${1#*=}"
-		shift
-		;;
-	--yes) SKIP_CONFIRM=true && shift ;;
-	-h | --help)
-		usage
-		exit 0
-		;;
-	*)
-		echo "未知参数: $1" >&2
-		usage >&2
-		exit 1
-		;;
-	esac
-done
-
-# 日志格式按 specs/deployment-common.md 第四节「部署日志规范」：
-# 每个模块开头打印一次带执行时间的日志头，模块之间空一行。
-step() {
-	echo
-	echo "[$(date '+%Y-%m-%d %H:%M:%S')] ===== $* ====="
-}
-info() { echo "$*"; }
-warn() { echo "!! $*" >&2; }
-
-require_cmd() {
-	if ! command -v "$1" >/dev/null 2>&1; then
-		echo "缺少依赖命令: $1" >&2
-		exit 1
-	fi
+require_command() {
+    local cmd="$1"
+    command -v "$cmd" >/dev/null 2>&1 || fail "缺少必要命令: $cmd"
 }
 
-if [ "${TARGET}" = "backend" ] || [ "${TARGET}" = "all" ]; then
-	require_cmd supervisorctl
-	require_cmd curl
-	if [ "${ACTION}" = "deploy" ]; then
-		require_cmd mvn
-		require_cmd java
-	fi
+# ── 健康检查 ──────────────────────────────────────────────────────
+
+wait_service_ready() {
+    local timeout="${SERVICE_READY_TIMEOUT:-420}"
+    local url="http://127.0.0.1:${APP_PORT}/api/<SERVICE_NAME>/health"
+    local started_at elapsed http_code
+
+    started_at="$(date +%s)"
+    log "等待服务就绪: $url，最长 ${timeout}s，每 5s 检测一次"
+    while true; do
+        http_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || echo "000")"
+        elapsed=$(( $(date +%s) - started_at ))
+        if [ "$http_code" = "200" ]; then
+            log "服务已就绪（耗时 ${elapsed}s，HTTP $http_code）"
+            return 0
+        fi
+        if [ "$elapsed" -ge "$timeout" ]; then
+            supervisorctl -c "$SUPERVISOR_CONF" status "<SERVICE_NAME>" || true
+            tail -n 120 "$LOG_DIR/supervisord.log" || true
+            fail "服务启动超时，健康检查未通过: $url（最后 HTTP $http_code）"
+        fi
+        log "检测中: 尚未就绪（已等待 ${elapsed}s / ${timeout}s，HTTP $http_code）"
+        sleep 5
+    done
+}
+
+remote_wait_service_ready() {
+    local timeout="${SERVICE_READY_TIMEOUT:-420}"
+    local health_path="/api/<SERVICE_NAME>/health"
+    local started_at elapsed http_code
+
+    started_at="$(date +%s)"
+    log "等待远程服务就绪: ssh $REMOTE_HOST → http://127.0.0.1:${APP_PORT}$health_path，最长 ${timeout}s"
+    while true; do
+        http_code="$(remote_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${APP_PORT}$health_path" 2>/dev/null || echo "000")"
+        elapsed=$(( $(date +%s) - started_at ))
+        if [ "$http_code" = "200" ]; then
+            log "远程服务已就绪（耗时 ${elapsed}s，HTTP $http_code）"
+            return 0
+        fi
+        if [ "$elapsed" -ge "$timeout" ]; then
+            remote_exec "supervisorctl -c $SUPERVISOR_CONF status <SERVICE_NAME>" || true
+            fail "远程服务启动超时: $REMOTE_HOST http://127.0.0.1:${APP_PORT}$health_path（最后 HTTP $http_code）"
+        fi
+        log "检测中: 远程服务尚未就绪（已等待 ${elapsed}s / ${timeout}s，HTTP $http_code）"
+        sleep 5
+    done
+}
+
+# ── 版本 / JAR ──────────────────────────────────────────────────
+
+read_backend_version() {
+    local pom="$1"
+    awk '
+        /<artifactId><SERVICE_NAME><\/artifactId>/ { found=1; next }
+        found && /<version>/ {
+            gsub(/.*<version>|<\/version>.*/, "", $0)
+            print $0
+            exit
+        }
+    ' "$pom"
+}
+
+get_jar_path() {
+    find "$BACKEND_DIR/target" -maxdepth 1 -type f -name "<SERVICE_NAME>-*.jar" \
+        ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" | head -1
+}
+
+# ── supervisord 配置（inline 生成，不从 deploy-conf/supervisor/ 复制）──
+
+write_supervisor_conf() {
+    local app_dir="$APP_DIR"
+    local log_dir="$LOG_DIR"
+    local conf_file="$SUPERVISOR_CONF_DIR/<SERVICE_NAME>.conf"
+
+    mkdir -p "$log_dir" "$SUPERVISOR_CONF_DIR"
+    cat > "$conf_file" <<EOF
+[program:<SERVICE_NAME>]
+command=/bin/bash -c "[ -f $app_dir/.env ] && { set -a; . $app_dir/.env; set +a; }; exec \${JAVA_EXEC:-/usr/bin/java} -jar $app_dir/<SERVICE_NAME>.jar"
+directory=$app_dir
+autostart=true
+autorestart=true
+startsecs=10
+startretries=3
+stdout_logfile=$log_dir/supervisord.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=30
+stdout_capture_maxbytes=1MB
+stderr_logfile=$log_dir/supervisord.log
+stderr_logfile_maxbytes=10MB
+stderr_logfile_backups=30
+stderr_capture_maxbytes=1MB
+EOF
+}
+
+# ── env 文件：按环境选择 .env / .env.test / .env.prod ────────────
+
+resolve_env_file() {
+    local env_name="${DEPLOY_ENV:-dev}"
+    if [ "$env_name" != "dev" ] && [ -f "$BACKEND_DIR/.env.$env_name" ]; then
+        echo "$BACKEND_DIR/.env.$env_name"
+    else
+        echo "$BACKEND_DIR/.env"
+    fi
+}
+
+# ── 本地部署 ─────────────────────────────────────────────────────
+
+deploy_service_jar() {
+    local jar_file
+    jar_file="$(get_jar_path)"
+    [ -n "$jar_file" ] && [ -f "$jar_file" ] || fail "未找到 <SERVICE_NAME> JAR（target/ 下无匹配文件）"
+    local target_jar="$APP_DIR/<SERVICE_NAME>-$BACKEND_VERSION.jar"
+
+    mkdir -p "$APP_DIR"
+    cp -f "$jar_file" "$target_jar.tmp"
+    mv -f "$target_jar.tmp" "$target_jar"
+    ln -sfn "<SERVICE_NAME>-$BACKEND_VERSION.jar" "$APP_DIR/<SERVICE_NAME>.jar"
+
+    local env_file
+    env_file="$(resolve_env_file)"
+    if [ -f "$env_file" ]; then
+        cp -f "$env_file" "$APP_DIR/.env"
+        log "已部署 .env（来源: $env_file）"
+    else
+        log "警告: 未找到 env 文件: $env_file"
+    fi
+
+    log "写入 supervisor 配置: $SUPERVISOR_CONF_DIR/<SERVICE_NAME>.conf"
+    write_supervisor_conf
+    log "已部署 JAR: $target_jar"
+}
+
+restart_service() {
+    log "重启 supervisor 服务: <SERVICE_NAME>"
+    if ! supervisorctl -c "$SUPERVISOR_CONF" restart "<SERVICE_NAME>"; then
+        supervisorctl -c "$SUPERVISOR_CONF" start "<SERVICE_NAME>"
+    fi
+}
+
+# ── 远程部署 ─────────────────────────────────────────────────────
+
+remote_exec() {
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$REMOTE_HOST" "$@"
+}
+
+remote_deploy_service_jar() {
+    local jar_file
+    jar_file="$(get_jar_path)"
+    [ -n "$jar_file" ] && [ -f "$jar_file" ] || fail "未找到 <SERVICE_NAME> JAR（target/ 下无匹配文件）"
+    local target_jar="$APP_DIR/<SERVICE_NAME>-$BACKEND_VERSION.jar"
+
+    log "上传 JAR 到 $REMOTE_HOST:$target_jar"
+    remote_exec "mkdir -p $APP_DIR"
+    rsync -az --progress "$jar_file" "$REMOTE_HOST:$target_jar.tmp"
+    remote_exec "mv -f $target_jar.tmp $target_jar && ln -sfn <SERVICE_NAME>-$BACKEND_VERSION.jar $APP_DIR/<SERVICE_NAME>.jar"
+
+    local env_file
+    env_file="$(resolve_env_file)"
+    if [ -f "$env_file" ]; then
+        rsync -az "$env_file" "$REMOTE_HOST:$APP_DIR/.env"
+        log "已同步 .env（来源: $env_file）"
+    else
+        log "警告: 未找到 env 文件: $env_file"
+    fi
+
+    local app_dir="$APP_DIR"
+    local log_dir="$LOG_DIR"
+    local conf_file="$SUPERVISOR_CONF_DIR/<SERVICE_NAME>.conf"
+    log "写入远程 supervisor 配置: $REMOTE_HOST:$conf_file"
+    remote_exec "mkdir -p $log_dir $SUPERVISOR_CONF_DIR"
+    remote_exec "cat > $conf_file" <<EOF
+[program:<SERVICE_NAME>]
+command=/bin/bash -c "[ -f $app_dir/.env ] && { set -a; . $app_dir/.env; set +a; }; exec \${JAVA_EXEC:-/usr/bin/java} -jar $app_dir/<SERVICE_NAME>.jar"
+directory=$app_dir
+autostart=true
+autorestart=true
+startsecs=10
+startretries=3
+stdout_logfile=$log_dir/supervisord.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=30
+stdout_capture_maxbytes=1MB
+stderr_logfile=$log_dir/supervisord.log
+stderr_logfile_maxbytes=10MB
+stderr_logfile_backups=30
+stderr_capture_maxbytes=1MB
+EOF
+    log "已上传 JAR: $REMOTE_HOST:$target_jar"
+}
+
+remote_restart_service() {
+    log "远程重启 supervisor 服务: <SERVICE_NAME>"
+    remote_exec "supervisorctl -c $SUPERVISOR_CONF reread && supervisorctl -c $SUPERVISOR_CONF update"
+    if ! remote_exec "supervisorctl -c $SUPERVISOR_CONF restart <SERVICE_NAME>"; then
+        remote_exec "supervisorctl -c $SUPERVISOR_CONF start <SERVICE_NAME>"
+    fi
+}
+
+# ── SSL / Nginx ───────────────────────────────────────────────────
+
+cert_domain_for_env() {
+    case "$1" in
+        test) echo "<TEST_DOMAIN>" ;;
+        prod) echo "<PROD_DOMAIN>" ;;
+        *) echo "" ;;
+    esac
+}
+
+# --target ssl：安装 nginx（apt）+ 主配置 + 站点配置（按证书存在与否选 HTTPS/HTTP）
+deploy_nginx_ssl() {
+    local env="$DEPLOY_ENV"
+    local nginx_main_conf="$DEPLOY_CONF_DIR/nginx/nginx.conf"
+    local remote_site_conf="/etc/nginx/conf.d/<SERVICE_NAME>.conf"
+    local remote_cert_dir="/etc/nginx/ssl"
+    local has_cert=false
+    local nginx_conf cert_domain
+    cert_domain="$(cert_domain_for_env "$env")"
+
+    [ -f "$nginx_main_conf" ] || fail "nginx 主配置不存在: $nginx_main_conf"
+
+    if [ -n "$cert_domain" ]; then
+        if [ -n "$REMOTE_HOST" ]; then
+            if remote_exec "test -f $remote_cert_dir/$cert_domain.pem && test -f $remote_cert_dir/$cert_domain.key" 2>/dev/null; then
+                has_cert=true
+            fi
+        else
+            if [ -f "$remote_cert_dir/$cert_domain.pem" ] && [ -f "$remote_cert_dir/$cert_domain.key" ]; then
+                has_cert=true
+            fi
+        fi
+    fi
+
+    if [ "$has_cert" = true ]; then
+        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/<SERVICE_NAME>.$env.conf"
+        [ -f "$nginx_conf" ] || fail "nginx 站点配置不存在: $nginx_conf"
+    else
+        log "警告: 证书未找到（$remote_cert_dir），降级使用 dev 配置（HTTP）"
+        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/<SERVICE_NAME>.dev.conf"
+        [ -f "$nginx_conf" ] || fail "nginx dev 配置不存在: $nginx_conf"
+    fi
+
+    if [ -n "$REMOTE_HOST" ]; then
+        log "安装 nginx（apt）: $REMOTE_HOST"
+        remote_exec "apt-get update -qq && apt-get install -y -qq nginx >/dev/null 2>&1" || fail "远程安装 nginx 失败"
+        log "上传 nginx.conf 主配置到 $REMOTE_HOST:/etc/nginx/nginx.conf"
+        rsync -az "$nginx_main_conf" "$REMOTE_HOST:/etc/nginx/nginx.conf"
+        log "上传站点配置到 $REMOTE_HOST:$remote_site_conf"
+        remote_exec "mkdir -p /etc/nginx/conf.d"
+        rsync -az "$nginx_conf" "$REMOTE_HOST:$remote_site_conf"
+        remote_exec "rm -f /etc/nginx/sites-enabled/default"
+        log "验证并重载 nginx"
+        remote_exec "nginx -t" || fail "远程 nginx 配置检测失败"
+        remote_exec "systemctl enable nginx && systemctl reload nginx"
+    else
+        log "安装 nginx（apt）"
+        apt-get update -qq && apt-get install -y -qq nginx >/dev/null 2>&1 || fail "安装 nginx 失败"
+        log "部署 nginx.conf 主配置到 /etc/nginx/nginx.conf"
+        cp -f "$nginx_main_conf" /etc/nginx/nginx.conf
+        log "部署站点配置到 $remote_site_conf"
+        mkdir -p /etc/nginx/conf.d
+        cp -f "$nginx_conf" "$remote_site_conf"
+        rm -f /etc/nginx/sites-enabled/default
+        log "验证并重载 nginx"
+        nginx -t || fail "nginx 配置检测失败"
+        systemctl enable nginx && systemctl reload nginx
+    fi
+
+    if [ "$has_cert" = true ]; then
+        log "Nginx 部署完成（环境: $env，HTTPS）"
+    else
+        log "Nginx 部署完成（环境: dev，HTTP）"
+    fi
+}
+
+# 后端部署时自动同步 nginx 站点配置（目标已装 nginx 则校验+reload，未装则跳过）
+sync_nginx_conf() {
+    local env="${DEPLOY_ENV:-dev}"
+    local site_conf="/etc/nginx/conf.d/<SERVICE_NAME>.conf"
+    local cert_dir="/etc/nginx/ssl"
+    local has_cert=false
+    local cert_domain
+    cert_domain="$(cert_domain_for_env "$env")"
+
+    if [ -n "$REMOTE_HOST" ]; then
+        if ! remote_exec "command -v nginx >/dev/null 2>&1"; then
+            log "目标主机未安装 nginx，跳过站点配置同步"
+            return 0
+        fi
+        if [ -n "$cert_domain" ] && remote_exec "test -f $cert_dir/$cert_domain.pem && test -f $cert_dir/$cert_domain.key" 2>/dev/null; then
+            has_cert=true
+        fi
+    else
+        if ! command -v nginx >/dev/null 2>&1; then
+            log "本机未安装 nginx，跳过站点配置同步"
+            return 0
+        fi
+        if [ -n "$cert_domain" ] && [ -f "$cert_dir/$cert_domain.pem" ] && [ -f "$cert_dir/$cert_domain.key" ]; then
+            has_cert=true
+        fi
+    fi
+
+    local nginx_conf
+    if [ "$has_cert" = true ]; then
+        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/<SERVICE_NAME>.$env.conf"
+        [ -f "$nginx_conf" ] || fail "nginx 站点配置不存在: $nginx_conf"
+    else
+        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/<SERVICE_NAME>.dev.conf"
+        [ -f "$nginx_conf" ] || fail "nginx dev 配置不存在: $nginx_conf"
+    fi
+    log "同步 nginx 站点配置: $nginx_conf → $site_conf"
+
+    if [ -n "$REMOTE_HOST" ]; then
+        rsync -az "$nginx_conf" "$REMOTE_HOST:$site_conf"
+        remote_exec "nginx -t" || fail "远程 nginx 配置检测失败"
+        remote_exec "systemctl reload nginx || nginx -s reload" || fail "远程 nginx 重载失败"
+    else
+        cp -f "$nginx_conf" "$site_conf"
+        nginx -t || fail "nginx 配置检测失败"
+        systemctl reload nginx 2>/dev/null || nginx -s reload || fail "nginx 重载失败"
+    fi
+    log "nginx 站点配置同步完成（来源: $(basename "$nginx_conf")）"
+}
+
+# ── 参数解析 ─────────────────────────────────────────────────────
+
+set_deploy_target() {
+    case "$1" in
+        all)
+            DEPLOY_BACKEND=true
+            DEPLOY_WEB=true
+            ;;
+        backend)
+            DEPLOY_BACKEND=true
+            DEPLOY_WEB=false
+            ;;
+        web)
+            DEPLOY_BACKEND=false
+            DEPLOY_WEB=true
+            ;;
+        ssl|nginx)
+            DEPLOY_BACKEND=false
+            DEPLOY_WEB=false
+            DEPLOY_SSL=true
+            ;;
+        *)
+            fail "未知部署目标: $1；可选值: all, backend, web, ssl"
+            ;;
+    esac
+}
+
+parse_deploy_args() {
+    local target_set=false
+
+    DEPLOY_BACKEND=true
+    DEPLOY_WEB=true
+    DEPLOY_SSL=false
+    AUTO_CONFIRM=false
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            -t|--target)
+                [ "$#" -ge 2 ] || fail "$1 缺少参数"
+                set_deploy_target "$2"
+                target_set=true
+                shift 2
+                ;;
+            --all)         set_deploy_target "all";     target_set=true; shift ;;
+            --backend)     set_deploy_target "backend"; target_set=true; shift ;;
+            --web)         set_deploy_target "web";     target_set=true; shift ;;
+            --ssl|--nginx) set_deploy_target "ssl";     target_set=true; shift ;;
+            -e|--env)
+                [ "$#" -ge 2 ] || fail "$1 缺少参数"
+                case "$2" in
+                    dev|test|prod) DEPLOY_ENV="$2" ;;
+                    *) fail "--env 可选值: dev, test, prod" ;;
+                esac
+                shift 2
+                ;;
+            -r|--remote)
+                [ "$#" -ge 2 ] || fail "$1 缺少参数"
+                REMOTE_HOST="$2"
+                shift 2
+                ;;
+            -y|--yes)
+                AUTO_CONFIRM=true
+                shift
+                ;;
+            *)
+                usage
+                fail "未知参数: $1"
+                ;;
+        esac
+    done
+
+    if [ "$DEPLOY_SSL" = true ] && [ -z "$DEPLOY_ENV" ]; then
+        if [ "$DEPLOY_BACKEND" = false ] && [ "$DEPLOY_WEB" = false ]; then
+            fail "--target ssl 需要指定 --env test|prod"
+        fi
+        log "未指定 --env，跳过 SSL/Nginx 部署"
+        DEPLOY_SSL=false
+    fi
+    if [ "$DEPLOY_SSL" = true ] && [ "${DEPLOY_ENV:-}" = "dev" ]; then
+        fail "--target ssl 仅支持 --env test|prod（dev 为 HTTP 明文环境）"
+    fi
+    if [ "$DEPLOY_BACKEND" = false ] && [ "$DEPLOY_WEB" = false ] && [ "$DEPLOY_SSL" = false ]; then
+        fail "未选择任何部署内容"
+    fi
+}
+
+# ── 早期帮助 ─────────────────────────────────────────────────────
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
 fi
 
-if [ "${TARGET}" = "web" ] || [ "${TARGET}" = "all" ]; then
-	require_cmd npm
-	[ -f "${WEB_DIR}/package.json" ] || {
-		echo "找不到 web 工程: ${WEB_DIR}/package.json" >&2
-		exit 1
-	}
+# ── 工程目录校验（必须在项目根目录执行）──────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+CURRENT_DIR="$(pwd -P)"
+
+if [ "$CURRENT_DIR" != "$PROJECT_DIR" ]; then
+    fail "请在项目根目录执行: cd $PROJECT_DIR && bash scripts/deploy.sh；当前目录: $CURRENT_DIR"
 fi
 
-if [ "$(id -u)" -ne 0 ]; then
-	echo "需要 root 权限（写 /opt/soft/apps、/etc/supervisor/conf.d 等），请用 sudo 运行" >&2
-	exit 1
+# ── 变量声明 ─────────────────────────────────────────────────────
+REMOTE_HOST=""
+DEPLOY_ENV=""
+BACKEND_DIR="$PROJECT_DIR/src/backend/<SERVICE_NAME>"
+WEB_DIR="$PROJECT_DIR/src/web"
+DEPLOY_CONF_DIR="$PROJECT_DIR/deploy-conf"
+APP_DIR="/opt/soft/apps/<SERVICE_NAME>"
+LOG_DIR="/data/logs/apps/<SERVICE_NAME>"
+WEB_DEPLOY_PATH="${WEB_DEPLOY_PATH:-$APP_DIR/web}"
+RUNTIME_DIR="$PROJECT_DIR/runtime"
+SUPERVISOR_CONF="${SUPERVISOR_CONF:-/etc/supervisor/supervisord.conf}"
+SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
+
+parse_deploy_args "$@"
+
+# ── 依赖检查 ─────────────────────────────────────────────────────
+if [ "$DEPLOY_BACKEND" = true ]; then
+    require_command mvn
+    if [ -n "$REMOTE_HOST" ]; then
+        require_command ssh
+        require_command rsync
+    else
+        require_command supervisorctl
+        require_command curl
+    fi
+fi
+if [ "$DEPLOY_WEB" = true ]; then
+    require_command node
+    require_command npm
+    if [ -n "$REMOTE_HOST" ]; then
+        require_command rsync
+    fi
+    [ -f "$WEB_DIR/package.json" ] || fail "package.json 不存在: $WEB_DIR/package.json"
 fi
 
-# ── supervisord daemon 可达性检查（见 specs/deployment-common.md 第三节规则 1）──────
-#
-# 本脚本绝不自行执行 systemctl start/restart supervisor：如果 daemon 没在跑，说明操作者
-# 需要先手动确认 /etc/supervisor/conf.d/*.ini 里的其他项目程序是否有"影子进程"已经在跑
-# （ps aux 按 jar 路径核对），确认安全后才手动启动 daemon，而不是让部署脚本代劳。
-check_supervisord_daemon() {
-	# 用 `supervisorctl pid` 而不是 `status` 判断 daemon 是否可达：`status` 只要有任何
-	# 程序不是 RUNNING 就返回非零，会把"程序没在跑"误判成"daemon 连不上"。
-	if ! supervisorctl pid >/dev/null 2>&1; then
-		warn "supervisord daemon 当前不可达（无法连接 supervisorctl）。"
-		warn "本脚本不会自动执行 systemctl start supervisor——这台机器上曾经因为"
-		warn "supervisord 重启导致其他项目的服务反复重启（见 specs/deployment-common.md 第八节）。"
-		warn "请先手动执行以下检查，确认安全后再手动启动 daemon："
-		warn "  1. systemctl status supervisor"
-		warn "  2. 核对 /etc/supervisor/conf.d/*.ini 里每个程序对应的 jar 是否已经"
-		warn "     以其他方式（非 supervisord）独立运行（ps aux | grep <jar路径>）"
-		warn "  3. 确认安全后: systemctl start supervisor"
-		exit 1
-	fi
-}
-
-# ── 部署前检查清单（见 specs/deployment.md 第六节）────────────────────────────
-preflight_checks() {
-	step "0/6 部署前检查（specs/deployment.md 第六节）"
-	check_supervisord_daemon
-	info "[1/4] supervisord daemon 可达 ✓"
-
-	if [ ! -f "${APP_DIR}/.env" ]; then
-		warn "[2/4] 未找到 ${APP_DIR}/.env —— 服务启动时会因缺少数据库连接信息而失败。"
-		warn "      请先执行： cp ${DEPLOY_CONF_DIR}/env.${ENV}.example ${APP_DIR}/.env 并填入真实凭证。"
-		exit 1
-	fi
-	info "[2/4] ${APP_DIR}/.env 存在 ✓"
-
-	if ss -tln 2>/dev/null | grep -qE ":(${NGINX_PORT}|${APP_PORT})\b"; then
-		# 首次部署端口应为空闲；重新部署时端口已被本服务自己占用是正常情况，
-		# 这里只做提示，不阻断——真正的冲突会在 supervisorctl restart 阶段暴露。
-		info "[3/4] 端口 ${NGINX_PORT}/${APP_PORT} 已被占用（如果是本服务上次部署留下的，属正常）"
-	else
-		info "[3/4] 端口 ${NGINX_PORT}/${APP_PORT} 空闲 ✓"
-	fi
-
-	if [ -x "${NGINX_BIN}" ] && "${NGINX_BIN}" -t >/dev/null 2>&1; then
-		info "[4/4] nginx 配置当前健康 ✓"
-	else
-		warn "[4/4] nginx -t 检查未通过或找不到 ${NGINX_BIN}，共享 nginx 当前状态不健康"
-		warn "      （如果只想部署应用本身不碰 nginx，加 --no-nginx 重试）"
-		exit 1
-	fi
-}
-
-# ── 启动/重启后的健康检查（见 specs/deployment-common.md 第六节）────────────────
-#
-# 探活失败不代表进程一定挂了，也可能是 Flyway 迁移/Hibernate 校验还没跑完，
-# 所以给足 60 秒轮询而不是探一次就判定失败；超时必须阻断后续步骤。
-wait_for_health() {
-	local elapsed=0
-	while [ "${elapsed}" -lt "${HEALTH_TIMEOUT_SECONDS}" ]; do
-		if curl -sf -o /dev/null "${HEALTH_URL}"; then
-			info "健康检查通过（${HEALTH_URL}，耗时 ${elapsed} 秒）"
-			return 0
-		fi
-		sleep "${HEALTH_POLL_INTERVAL_SECONDS}"
-		elapsed=$((elapsed + HEALTH_POLL_INTERVAL_SECONDS))
-	done
-	warn "健康检查在 ${HEALTH_TIMEOUT_SECONDS} 秒内未通过（${HEALTH_URL}）"
-	warn "部署已中止，不会继续安装/重载 nginx。排查启动日志："
-	warn "  tail -100 ${LOG_DIR}/supervisord.log"
-	exit 1
-}
-
-do_stop() {
-	step "停止 ${SERVICE_NAME}（不删除部署文件）"
-	supervisorctl stop "${SERVICE_NAME}"
-	# stop 后程序状态是 STOPPED（非 RUNNING），supervisorctl status 对此返回非零退出码——
-	# 这里是预期状态不是错误，用 || true 避免让脚本以失败退出码收尾。
-	supervisorctl status "${SERVICE_NAME}" || true
-}
-
-do_remove() {
-	if [ "${SKIP_CONFIRM}" != true ]; then
-		read -r -p "将完全移除 ${SERVICE_NAME}（停止进程 + 删 supervisord 配置 + 删 nginx vhost + 全局 reload），确认？[y/N] " reply
-		case "${reply}" in
-		[yY]*) ;;
-		*)
-			echo "已取消"
-			exit 0
-			;;
-		esac
-	fi
-
-	step "1/2 停止并移除 supervisord 配置"
-	supervisorctl stop "${SERVICE_NAME}" 2>/dev/null || true
-	rm -f "${SUPERVISOR_CONF}"
-	supervisorctl reread
-	supervisorctl update
-
-	if [ -f "${NGINX_VHOST_DST}" ]; then
-		step "2/2 移除 nginx vhost 并 reload（共享基础设施，将执行一次全局 reload）"
-		rm -f "${NGINX_VHOST_DST}"
-		"${NGINX_BIN}" -t
-		"${NGINX_BIN}" -s reload
-	else
-		step "2/2 未安装过 nginx vhost，跳过"
-	fi
-
-	step "移除完成"
-}
-
-# ── nginx vhost 安装（backend/web 共用，见 specs/deployment-common.md 第三节强制规范）──────
-# 装哪份 vhost 由 --env 决定：dev 无域名/HTTP，test/prod 域名+HTTPS（各自独立机器）。
-# test/prod 需要先跑 scripts/apply-ssl.sh 申请好证书，本函数只装 vhost，不申请证书。
-install_nginx_vhost() {
-	local nginx_conf_src="${DEPLOY_CONF_DIR}/nginx/vhosts/${SERVICE_NAME}.${ENV}.conf"
-	if [ ! -x "${NGINX_BIN}" ]; then
-		echo "未找到 nginx 可执行文件: ${NGINX_BIN}" >&2
-		exit 1
-	fi
-	if [ ! -f "${nginx_conf_src}" ]; then
-		echo "未找到 --env=${ENV} 对应的 nginx 配置: ${nginx_conf_src}" >&2
-		exit 1
-	fi
-	if [ "${ENV}" != "dev" ]; then
-		info "使用 --env=${ENV}，确认已经用 scripts/apply-ssl.sh ${ENV} 申请好证书（/opt/soft/nginx/ssl/），"
-		info "且域名已解析到本机——这两步不是本脚本负责的（见 ${nginx_conf_src} 的 server_name）。"
-	fi
-	cp "${nginx_conf_src}" "${NGINX_VHOST_DST}"
-	"${NGINX_BIN}" -t
-	"${NGINX_BIN}" -s reload
-}
-
-# 探测对外访问地址（只用于 dev 环境提示，test/prod 有固定域名）。
-EXTERNAL_IP=""
-detect_external_ip() {
-	if [ -z "${EXTERNAL_IP}" ]; then
-		EXTERNAL_IP="$(curl -s --max-time 3 https://icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)"
-		if [ -z "${EXTERNAL_IP}" ]; then
-			EXTERNAL_IP="$(curl -s --max-time 3 https://ifconfig.me 2>/dev/null || true)"
-		fi
-		if [ -z "${EXTERNAL_IP}" ]; then
-			EXTERNAL_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-		fi
-		EXTERNAL_IP="${EXTERNAL_IP:-<host>}"
-	fi
-	echo "${EXTERNAL_IP}"
-}
-
-access_url() {
-	local path="$1"
-	# test/prod 域名在 deploy-conf/nginx/vhosts/<SERVICE_NAME>.{test,prod}.conf 的 server_name 是唯一真实来源，
-	# 下方只是打印提示用，改域名时两处要同步。
-	case "${ENV}" in
-	test) echo "https://<TEST_DOMAIN>:${NGINX_PORT}${path}" ;;
-	prod) echo "https://<PROD_DOMAIN>:${NGINX_PORT}${path}" ;;
-	*) echo "http://$(detect_external_ip):${NGINX_PORT}${path}" ;;
-	esac
-}
-
-# ── 部署摘要（backend/web/all 共用，见下方各 dispatch 分支调用）────────────────
-# DEPLOYED_JAR_NAME 由 do_deploy()/do_rollback() 设置；kind 决定展示哪些区块。
-DEPLOYED_JAR_NAME=""
-print_summary() {
-	local kind="$1" # backend | web | all
-	echo
-	echo "══════════════════════ 部署摘要 ══════════════════════"
-	echo "  环境        : ${ENV}"
-	if [ "${kind}" = "backend" ] || [ "${kind}" = "all" ]; then
-		echo "  服务名      : ${SERVICE_NAME}"
-		if [ -n "${DEPLOYED_JAR_NAME}" ]; then
-			echo "  应用 JAR    : ${APP_DIR}/${DEPLOYED_JAR_NAME}（软链接 ${SERVICE_NAME}.jar -> 该文件）"
-		fi
-		echo "  内部端口    : 127.0.0.1:${APP_PORT}（不对外暴露）"
-		echo "  日志        : tail -f ${LOG_DIR}/supervisord.log"
-		echo "  进程状态    : supervisorctl status ${SERVICE_NAME}"
-	fi
-	if [ "${kind}" = "web" ] || [ "${kind}" = "all" ]; then
-		echo "  前端静态资源: ${WEB_APP_DIR}"
-	fi
-	if [ "${INSTALL_NGINX}" = true ]; then
-		echo "  对外访问    : $(access_url "/api/${SERVICE_NAME}/health")"
-	fi
-	echo "══════════════════════════════════════════════════════"
-}
-
-do_deploy() {
-	preflight_checks
-
-	step "1/6 构建后端 jar（${BACKEND_DIR}）"
-	(cd "${BACKEND_DIR}" && mvn -q clean package -DskipTests)
-
-	JAR_FILE=$(find "${BACKEND_DIR}/target" -maxdepth 1 -name "${SERVICE_NAME}-*.jar" ! -name "*sources*" | head -n1)
-	if [ -z "${JAR_FILE}" ]; then
-		echo "未找到构建产物 jar，中止部署" >&2
-		exit 1
-	fi
-	info "构建产物: ${JAR_FILE}"
-
-	step "2/6 部署 jar 到 ${APP_DIR}（版本化文件名 + 软链接，保留上一版本用于 --rollback）"
-	mkdir -p "${APP_DIR}" "${LOG_DIR}"
-	# JAR_FILE 文件名本身已带版本号（Maven 标准命名 <artifactId>-<version>.jar），
-	# 原样拷贝保留版本文件，再用软链接 ${SERVICE_NAME}.jar 指向它——supervisord 配置固定
-	# 引用软链接名，回滚时只需重新指向旧版本文件，不需要改 supervisord 配置或重新构建。
-	DEPLOYED_JAR_NAME="$(basename "${JAR_FILE}")"
-	cp "${JAR_FILE}" "${APP_DIR}/${DEPLOYED_JAR_NAME}"
-	ln -sfn "${DEPLOYED_JAR_NAME}" "${APP_DIR}/${SERVICE_NAME}.jar"
-	info "已部署: ${APP_DIR}/${DEPLOYED_JAR_NAME}"
-
-	step "3/6 写入 supervisord 配置 ${SUPERVISOR_CONF}"
-	# 从 deploy-conf/supervisor/<SERVICE_NAME>.${ENV}.ini 拷贝，不在部署时用 heredoc 现场拼接——
-	# 提前生成好、纳入版本管理，更容易审查和追踪变更。
-	cp "${DEPLOY_CONF_DIR}/supervisor/${SERVICE_NAME}.${ENV}.ini" "${SUPERVISOR_CONF}"
-
-	step "4/6 重新加载 supervisord 并（重）启动服务"
-	supervisorctl reread
-	supervisorctl update
-	supervisorctl restart "${SERVICE_NAME}" 2>/dev/null || supervisorctl start "${SERVICE_NAME}"
-	supervisorctl status "${SERVICE_NAME}"
-
-	step "5/6 健康检查（${HEALTH_URL}，最长等待 ${HEALTH_TIMEOUT_SECONDS} 秒）"
-	wait_for_health
-
-	if [ "${INSTALL_NGINX}" = true ] && [ "${TARGET}" != "all" ]; then
-		step "6/6 安装 nginx 反向代理配置"
-		install_nginx_vhost
-	else
-		step "6/6 跳过 nginx 配置安装（$([ "${TARGET}" = "all" ] && echo "--target=all 统一在最后安装一次" || echo "--no-nginx")）"
-	fi
-
-	step "部署完成"
-}
-
-# ── 回滚（backend 专用，见用法 --rollback[=VERSION]）─────────────────────────
-# 不重新构建：把 ${SERVICE_NAME}.jar 软链接重新指向 APP_DIR 里仍保留的旧版本 jar，
-# 重启后走一次完整健康检查——回滚失败（健康检查不过）会以非零退出码中止，不会
-# 静默停留在半回滚状态。
-do_rollback() {
-	step "1/3 定位回滚目标版本"
-	local current_jar target_jar target_name
-	current_jar="$(readlink -f "${APP_DIR}/${SERVICE_NAME}.jar" 2>/dev/null || true)"
-
-	if [ -n "${ROLLBACK_VERSION}" ]; then
-		target_jar="${APP_DIR}/${SERVICE_NAME}-${ROLLBACK_VERSION}.jar"
-		[ -f "${target_jar}" ] || {
-			echo "未找到指定版本: ${target_jar}" >&2
-			exit 1
-		}
-	else
-		# 按修改时间取当前版本之外最近的一个历史 jar
-		target_jar="$(find "${APP_DIR}" -maxdepth 1 -name "${SERVICE_NAME}-*.jar" ! -samepath "${current_jar}" -printf '%T@ %p\n' 2>/dev/null |
-			sort -rn | head -n1 | cut -d' ' -f2-)"
-		[ -n "${target_jar}" ] || {
-			echo "未找到可回滚的历史版本（${APP_DIR}/${SERVICE_NAME}-*.jar 下没有当前版本之外的文件）" >&2
-			exit 1
-		}
-	fi
-	target_name="$(basename "${target_jar}")"
-	info "当前版本: $(basename "${current_jar:-（未部署）}")"
-	info "回滚到  : ${target_name}"
-
-	step "2/3 重新指向软链接并重启"
-	ln -sfn "${target_name}" "${APP_DIR}/${SERVICE_NAME}.jar"
-	DEPLOYED_JAR_NAME="${target_name}"
-	supervisorctl restart "${SERVICE_NAME}" 2>/dev/null || supervisorctl start "${SERVICE_NAME}"
-	supervisorctl status "${SERVICE_NAME}"
-
-	step "3/3 健康检查（${HEALTH_URL}，最长等待 ${HEALTH_TIMEOUT_SECONDS} 秒）"
-	wait_for_health
-
-	step "回滚完成"
-}
-
-do_web_build_and_deploy() {
-	step "1/3 构建前端静态资源（${WEB_DIR}）"
-	(cd "${WEB_DIR}" && npm ci --no-audit --no-fund && npm run build)
-	if [ ! -d "${WEB_DIR}/dist" ]; then
-		echo "未找到 web 构建产物: ${WEB_DIR}/dist" >&2
-		exit 1
-	fi
-
-	step "2/3 部署静态资源到 ${WEB_APP_DIR}"
-	rm -rf "${WEB_APP_DIR}"
-	mkdir -p "${WEB_APP_DIR}"
-	cp -r "${WEB_DIR}/dist/." "${WEB_APP_DIR}/"
-	info "静态资源部署路径: ${WEB_APP_DIR}"
-
-	if [ "${INSTALL_NGINX}" = true ] && [ "${TARGET}" != "all" ]; then
-		step "3/3 安装 nginx 反向代理配置"
-		install_nginx_vhost
-	else
-		step "3/3 跳过 nginx 配置安装（$([ "${TARGET}" = "all" ] && echo "--target=all 统一在最后安装一次" || echo "--no-nginx")）"
-	fi
-}
-
-if [ "${TARGET}" = "backend" ]; then
-	case "${ACTION}" in
-	deploy)
-		do_deploy
-		print_summary "backend"
-		;;
-	stop) do_stop ;;
-	remove) do_remove ;;
-	rollback)
-		do_rollback
-		print_summary "backend"
-		;;
-	esac
-	exit 0
+# ── 版本读取 ─────────────────────────────────────────────────────
+BACKEND_VERSION="-"
+if [ "$DEPLOY_BACKEND" = true ]; then
+    BACKEND_VERSION="$(read_backend_version "$BACKEND_DIR/pom.xml")"
+    [ -n "$BACKEND_VERSION" ] || fail "无法从 pom.xml 读取 <SERVICE_NAME> 版本"
 fi
 
-if [ "${TARGET}" = "web" ]; then
-	case "${ACTION}" in
-	deploy)
-		do_web_build_and_deploy
-		print_summary "web"
-		;;
-	stop | remove | rollback)
-		info "--target=web 没有\"停止/移除/回滚\"的概念（只是静态构建产物），忽略 ${ACTION}"
-		;;
-	esac
-	exit 0
+# 后端部署后自动同步 nginx 站点配置（--target ssl 完整安装流程除外）
+NEED_NGINX_SYNC=false
+if [ "$DEPLOY_BACKEND" = true ] && [ "$DEPLOY_SSL" = false ]; then
+    NEED_NGINX_SYNC=true
 fi
 
-if [ "${TARGET}" = "all" ]; then
-	case "${ACTION}" in
-	deploy)
-		do_deploy
-		do_web_build_and_deploy
-		if [ "${INSTALL_NGINX}" = true ]; then
-			step "统一安装 nginx 反向代理配置（backend + web 均已部署完成，只 reload 一次）"
-			install_nginx_vhost
-		fi
-		step "全量部署完成"
-		print_summary "all"
-		;;
-	stop)
-		info "--target=all 的 --stop 只作用于 backend（web 只是构建产物，没有"停止"的概念）"
-		do_stop
-		;;
-	remove)
-		info "--target=all 的 --remove 只作用于 backend（web 只是构建产物，没有"移除"的概念）"
-		do_remove
-		;;
-	rollback)
-		info "--target=all 的 --rollback 只作用于 backend（web 只是构建产物，没有"回滚"的概念）"
-		do_rollback
-		print_summary "backend"
-		;;
-	esac
-	exit 0
+log "======================================================"
+DEPLOY_TARGETS=()
+[ "$DEPLOY_BACKEND" = true ] && DEPLOY_TARGETS+=("backend")
+[ "$DEPLOY_WEB" = true ]     && DEPLOY_TARGETS+=("web")
+[ "$DEPLOY_SSL" = true ]     && DEPLOY_TARGETS+=("ssl")
+log "本次部署目标   : ${DEPLOY_TARGETS[*]:-（无）}"
+log "  目标环境       : ${DEPLOY_ENV:-dev}"
+log "  部署位置       : ${REMOTE_HOST:-本机}"
+log "======================================================"
+log "  项目根目录     : $PROJECT_DIR"
+[ -n "$REMOTE_HOST" ] && log "  远程服务器     : $REMOTE_HOST"
+if [ "$DEPLOY_BACKEND" = true ]; then
+    log "  后端目录       : $BACKEND_DIR"
+    log "  后端版本       : $BACKEND_VERSION"
 fi
+[ "$DEPLOY_WEB" = true ] && log "  前端目录       : $WEB_DIR"
+log "======================================================"
+
+mkdir -p "$RUNTIME_DIR"
+
+# ── 初始化部署目录 ────────────────────────────────────────────────
+if [ -n "$REMOTE_HOST" ]; then
+    log "初始化远程目录: $APP_DIR, $LOG_DIR, $SUPERVISOR_CONF_DIR"
+    remote_exec "mkdir -p $APP_DIR $LOG_DIR $WEB_DEPLOY_PATH $SUPERVISOR_CONF_DIR /data/logs/nginx"
+    log "部署 apply-ssl.sh 到 $REMOTE_HOST:$APP_DIR/"
+    rsync -az "$SCRIPT_DIR/apply-ssl.sh" "$REMOTE_HOST:$APP_DIR/apply-ssl.sh"
+    remote_exec "chmod +x $APP_DIR/apply-ssl.sh"
+else
+    log "初始化本地目录: $APP_DIR, $LOG_DIR, $SUPERVISOR_CONF_DIR"
+    mkdir -p "$APP_DIR" "$LOG_DIR" "$WEB_DEPLOY_PATH" "$SUPERVISOR_CONF_DIR" /data/logs/nginx
+    log "部署 apply-ssl.sh 到 $APP_DIR/"
+    cp -f "$SCRIPT_DIR/apply-ssl.sh" "$APP_DIR/apply-ssl.sh"
+    chmod +x "$APP_DIR/apply-ssl.sh"
+fi
+
+# ── Phase 计数 ───────────────────────────────────────────────────
+PHASE_TOTAL=0
+[ "$DEPLOY_BACKEND" = true ]    && PHASE_TOTAL=$((PHASE_TOTAL + 3))
+[ "$DEPLOY_WEB" = true ]        && PHASE_TOTAL=$((PHASE_TOTAL + 1))
+[ "$DEPLOY_SSL" = true ]        && PHASE_TOTAL=$((PHASE_TOTAL + 1))
+[ "$NEED_NGINX_SYNC" = true ]   && PHASE_TOTAL=$((PHASE_TOTAL + 1))
+PHASE_INDEX=1
+
+# ── 后端部署 ─────────────────────────────────────────────────────
+if [ "$DEPLOY_BACKEND" = true ]; then
+    log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: Maven 构建 =========="
+    PHASE_INDEX=$((PHASE_INDEX + 1))
+    MVN_LOG_FILE="$RUNTIME_DIR/deploy-maven-$(date '+%Y%m%d%H%M%S').log"
+    log "Maven 构建日志: $MVN_LOG_FILE"
+    if ! mvn -f "$BACKEND_DIR/pom.xml" clean package -DskipTests --batch-mode >"$MVN_LOG_FILE" 2>&1; then
+        fail_maven_build "$MVN_LOG_FILE"
+    fi
+    log "Maven 构建完成"
+
+    if [ -n "$REMOTE_HOST" ]; then
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 上传 JAR 到 $REMOTE_HOST =========="
+        PHASE_INDEX=$((PHASE_INDEX + 1))
+        remote_deploy_service_jar
+
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 远程重启 supervisor 服务 =========="
+        PHASE_INDEX=$((PHASE_INDEX + 1))
+        remote_restart_service
+        remote_wait_service_ready
+    else
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 部署 JAR 到 $APP_DIR =========="
+        PHASE_INDEX=$((PHASE_INDEX + 1))
+        deploy_service_jar
+
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 刷新并重启 supervisor 服务 =========="
+        PHASE_INDEX=$((PHASE_INDEX + 1))
+        supervisorctl -c "$SUPERVISOR_CONF" reread
+        supervisorctl -c "$SUPERVISOR_CONF" update
+        restart_service
+        supervisorctl -c "$SUPERVISOR_CONF" status "<SERVICE_NAME>"
+        wait_service_ready
+    fi
+
+    if [ "$NEED_NGINX_SYNC" = true ]; then
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 同步 nginx 站点配置 =========="
+        PHASE_INDEX=$((PHASE_INDEX + 1))
+        sync_nginx_conf
+    fi
+fi
+
+# ── 前端部署 ─────────────────────────────────────────────────────
+if [ "$DEPLOY_WEB" = true ]; then
+    log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 构建并部署前端静态资源 =========="
+    PHASE_INDEX=$((PHASE_INDEX + 1))
+    log "构建前端: $WEB_DIR"
+    (cd "$WEB_DIR" && npm ci --no-audit --no-fund && npm run build)
+    [ -d "$WEB_DIR/dist" ] || fail "未找到前端构建产物: $WEB_DIR/dist"
+    if [ -n "$REMOTE_HOST" ]; then
+        rsync -az --delete "$WEB_DIR/dist/" "$REMOTE_HOST:$WEB_DEPLOY_PATH/"
+        remote_exec "nginx -s reload" || true
+    else
+        rsync -a --delete "$WEB_DIR/dist/" "$WEB_DEPLOY_PATH/"
+        nginx -s reload 2>/dev/null || true
+    fi
+    log "前端已部署到: $WEB_DEPLOY_PATH"
+fi
+
+# ── SSL / Nginx 部署 ──────────────────────────────────────────────
+if [ "$DEPLOY_SSL" = true ]; then
+    log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 部署 SSL 证书和 Nginx 配置（${DEPLOY_ENV}）=========="
+    deploy_nginx_ssl
+fi
+
+# ── [STATUS] 机器可读输出 ─────────────────────────────────────────
+log "部署完成"
+if [ -n "$REMOTE_HOST" ]; then
+    echo "[STATUS] OK - 已远程部署到 $REMOTE_HOST（${DEPLOY_TARGETS[*]}）"
+elif [ "$DEPLOY_SSL" = true ] && [ "$DEPLOY_BACKEND" = false ] && [ "$DEPLOY_WEB" = false ]; then
+    echo "[STATUS] OK - SSL/Nginx 已部署（环境: ${DEPLOY_ENV}）"
+elif [ "$DEPLOY_BACKEND" = true ] && [ "$DEPLOY_WEB" = true ]; then
+    echo "[STATUS] OK - 已部署：后端 + 前端"
+elif [ "$DEPLOY_BACKEND" = true ]; then
+    echo "[STATUS] OK - 已部署：后端"
+elif [ "$DEPLOY_WEB" = true ]; then
+    echo "[STATUS] OK - 已部署：前端至 $WEB_DEPLOY_PATH"
+fi
+
+# ── 部署摘要 ─────────────────────────────────────────────────────
+detect_public_ip() {
+    local ip=""
+    local source
+    for source in "https://ifconfig.me" "https://api.ipify.org" "https://ipinfo.io/ip"; do
+        ip="$(curl -s -m 3 "$source" 2>/dev/null | tr -d '[:space:]')"
+        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    return 1
+}
+
+SUMMARY_HOST="${REMOTE_HOST:-}"
+[ -z "$SUMMARY_HOST" ] && SUMMARY_HOST="$(detect_public_ip || true)"
+[ -z "$SUMMARY_HOST" ] && SUMMARY_HOST="<host>"
+SUMMARY_HOST_PREFIX=""
+[ -n "$REMOTE_HOST" ] && SUMMARY_HOST_PREFIX="$REMOTE_HOST:"
+
+echo
+echo "══════════════════════ 部署摘要 ══════════════════════"
+echo "  ▍访问地址（本次环境: ${DEPLOY_ENV:-dev}）"
+echo "    dev   http://$SUMMARY_HOST:${NGINX_PORT}/api/<SERVICE_NAME>/health"
+echo "    test  https://<TEST_DOMAIN>:${NGINX_PORT}/api/<SERVICE_NAME>/health"
+echo "    prod  https://<PROD_DOMAIN>:${NGINX_PORT}/api/<SERVICE_NAME>/health"
+echo
+echo "  ▍应用位置"
+if [ "$DEPLOY_BACKEND" = true ]; then
+    echo "    JAR          : ${SUMMARY_HOST_PREFIX}${APP_DIR}/<SERVICE_NAME>-${BACKEND_VERSION}.jar"
+    echo "    日志目录      : ${SUMMARY_HOST_PREFIX}${LOG_DIR}"
+fi
+if [ "$DEPLOY_WEB" = true ]; then
+    echo "    前端静态资源  : ${SUMMARY_HOST_PREFIX}${WEB_DEPLOY_PATH}"
+fi
+if [ "$DEPLOY_SSL" = true ]; then
+    echo "    Nginx 站点配置: ${SUMMARY_HOST_PREFIX}/etc/nginx/conf.d/<SERVICE_NAME>.conf"
+fi
+echo "══════════════════════════════════════════════════════"

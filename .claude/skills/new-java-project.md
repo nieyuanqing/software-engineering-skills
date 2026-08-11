@@ -39,17 +39,14 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 
 功能
   为 Java/Spring Boot 工程生成完整的标准化部署配置，包括：
-    - scripts/deploy.sh                    部署脚本（构建 jar、supervisord 管理、健康检查、nginx 安装）
+    - scripts/deploy.sh                    部署脚本（Maven 构建、supervisord 管理、健康检查、远程部署、nginx 同步）
     - scripts/apply-ssl.sh                 SSL 证书申请脚本（Let's Encrypt + acme.sh）
     - deploy-conf/nginx/vhosts/<name>.dev.conf    nginx vhost（dev 环境，HTTP/IP+端口）
     - deploy-conf/nginx/vhosts/<name>.test.conf   nginx vhost（test 环境，HTTPS/域名）
     - deploy-conf/nginx/vhosts/<name>.prod.conf   nginx vhost（prod 环境，HTTPS/域名）
-    - deploy-conf/supervisor/<name>.dev.ini   supervisord 程序配置（dev 环境，--spring.profiles.active=dev）
-    - deploy-conf/supervisor/<name>.test.ini  supervisord 程序配置（test 环境）
-    - deploy-conf/supervisor/<name>.prod.ini  supervisord 程序配置（prod 环境）
-    - deploy-conf/env.dev.example             环境变量模板（dev 环境，JWT 可用占位符）
-    - deploy-conf/env.test.example            环境变量模板（test 环境，建议随机 JWT）
-    - deploy-conf/env.prod.example            环境变量模板（prod 环境，JWT 必须真实值）
+    - deploy-conf/env.dev.example             环境变量模板（dev 环境，含 SPRING_PROFILES_ACTIVE=dev）
+    - deploy-conf/env.test.example            环境变量模板（test 环境，含 SPRING_PROFILES_ACTIVE=test）
+    - deploy-conf/env.prod.example            环境变量模板（prod 环境，含 SPRING_PROFILES_ACTIVE=prod）
     - src/backend/<name>/src/main/resources/application.yml          Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
     - src/backend/<name>/src/main/resources/application-dev.yml      dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
     - src/backend/<name>/src/main/resources/application-test.yml     test profile（INFO 日志，Swagger 开启）
@@ -59,9 +56,11 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 
   所有产物遵循 specs/deployment-common.md 的跨项目通用规范：
     - 统一目录约定：/opt/soft/apps/<name>/、/data/logs/apps/<name>/
-    - 健康检查端点：/api/<name>/health（Spring Boot Actuator，startsecs=3）
-    - 部署日志格式：[YYYY-MM-DD HH:MM:SS] ===== <模块名> =====
-    - 共享 nginx/supervisord 操作安全规范（不自动 systemctl start supervisor）
+    - 健康检查端点：/api/<name>/health（Spring Boot Actuator，startsecs=10，健康检查最长等待 420s）
+    - 部署日志格式：[YYYY-MM-DD HH:MM:SS] [deploy.sh] <message>，阶段日志：Phase N/M
+    - supervisord 配置由 deploy.sh 在部署时 inline 生成（不从静态 ini 文件复制）
+    - 支持 --remote USER@HOST 远程部署（本地构建，rsync 上传，SSH 远程重启）
+    - 后端部署后自动同步 nginx 站点配置；完整 nginx 安装走 --target ssl
 
 示例
   /new-java-project
@@ -155,9 +154,6 @@ scripts/apply-ssl.sh
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf
-deploy-conf/supervisor/<SERVICE_NAME>.dev.ini
-deploy-conf/supervisor/<SERVICE_NAME>.test.ini
-deploy-conf/supervisor/<SERVICE_NAME>.prod.ini
 deploy-conf/env.dev.example
 deploy-conf/env.test.example
 deploy-conf/env.prod.example
@@ -199,9 +195,6 @@ specs/baseline-versions.md
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.dev.conf` |
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.test.conf` |
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.prod.conf` |
-| `deploy-conf/supervisor/<SERVICE_NAME>.dev.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.dev.ini` |
-| `deploy-conf/supervisor/<SERVICE_NAME>.test.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.test.ini` |
-| `deploy-conf/supervisor/<SERVICE_NAME>.prod.ini` | `software-engineering-skills/templates/deploy-conf/supervisor/service.prod.ini` |
 | `deploy-conf/env.dev.example` | `software-engineering-skills/templates/deploy-conf/env.dev.example` |
 | `deploy-conf/env.test.example` | `software-engineering-skills/templates/deploy-conf/env.test.example` |
 | `deploy-conf/env.prod.example` | `software-engineering-skills/templates/deploy-conf/env.prod.example` |
@@ -214,7 +207,9 @@ specs/baseline-versions.md
 
 ### `HAS_WEB=false` 时的处理
 
-如果 `HAS_WEB=false`，在生成的三份 nginx 配置（dev/test/prod）中删除 `# ── 前端静态资源` 注释块及其下方的整个 `location /web/` 块；同时在 `deploy.sh` 中把 `TARGET` 的默认值说明更新为注明"本服务无前端"，即不使用 `--target=web` 和 `--target=all`。
+如果 `HAS_WEB=false`：
+1. 在生成的三份 nginx 配置（dev/test/prod）中删除 `# ── 前端静态资源` 注释块及其下方的整个 `location /web/` 块。
+2. 在 `deploy.sh` 的 `parse_deploy_args()` 中把 `DEPLOY_WEB` 的初始值改为 `false`，并在 usage 说明中注明"本服务无前端，--target web 和 --target all 不适用"。
 
 ### 自定义 API 路径前缀
 
@@ -251,7 +246,7 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
 ```
 ## 下一步操作
 
-### 首次部署（dev 环境）
+### 首次部署（dev 环境，本机）
 
 1. 确认 supervisord daemon 正在运行，且端口 <NGINX_PORT>/<APP_PORT> 空闲：
    supervisorctl status
@@ -261,20 +256,31 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
    sudo -u postgres createuser -P <DB_NAME>
    sudo -u postgres createdb -O <DB_NAME> <DB_NAME>
 
-3. 配置环境变量：
-   sudo mkdir -p /opt/soft/apps/<SERVICE_NAME>
-   sudo cp deploy-conf/env.example /opt/soft/apps/<SERVICE_NAME>/.env
-   sudo vim /opt/soft/apps/<SERVICE_NAME>/.env   # 填入真实凭证
+3. 配置 dev 环境变量：
+   cp deploy-conf/env.dev.example src/backend/<SERVICE_NAME>/.env
+   vim src/backend/<SERVICE_NAME>/.env   # 填入真实凭证
 
 4. 执行部署：
-   sudo scripts/deploy.sh
+   bash scripts/deploy.sh
+
+### 首次部署（dev 环境，远程服务器）
+
+1. 配置远程服务器的 dev 环境变量：
+   rsync deploy-conf/env.dev.example root@<HOST>:/tmp/env.dev.example
+   ssh root@<HOST> "cp /tmp/env.dev.example /path/.env && vim /path/.env"
+
+2. 执行远程部署：
+   bash scripts/deploy.sh --remote root@<HOST>
 
 ### 首次部署（test/prod 环境）
 
 在对应机器上：
 1. 确认域名已解析到这台机器
 2. 申请 SSL 证书：bash scripts/apply-ssl.sh test  （或 prod）
-3. 执行部署：sudo scripts/deploy.sh --env=test  （或 prod）
+3. 配置环境变量：cp deploy-conf/env.test.example src/backend/<SERVICE_NAME>/.env.test  并填入真实凭证
+4. 执行部署：
+   bash scripts/deploy.sh --env test --remote root@<HOST>
+   bash scripts/deploy.sh --target ssl --env test --remote root@<HOST>
 ```
 
 ---
@@ -283,5 +289,7 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
 
 - **不要修改 `specs/deployment-common.md`** 中的通用规范内容，只更新端口登记表。
 - 生成的文件如果目标路径已存在，**先展示差异，询问用户是否覆盖**，不要直接覆盖。
-- `deploy-conf/env.example` 里的密码值保持占位符 `changeme`，不要填入任何真实凭证。
+- `deploy-conf/env.*.example` 里的密码值保持占位符 `changeme`，不要填入任何真实凭证。
+- **supervisord 配置不再生成静态 ini 文件**：deploy.sh 在部署时 inline 生成 `/etc/supervisor/conf.d/<SERVICE_NAME>.conf`，无需在版本库中维护三份 supervisor ini 文件。
+- Spring 环境（dev/test/prod）通过 env 文件中的 `SPRING_PROFILES_ACTIVE` 传递给 JVM，supervisord 命令行不再写死 `--spring.profiles.active`。
 - 如果目标工程的 `CLAUDE.md` 已存在，在其中追加一条说明，指向 `specs/deployment.md`；如果不存在，跳过（不自动创建 CLAUDE.md）。
