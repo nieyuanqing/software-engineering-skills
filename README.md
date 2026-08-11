@@ -219,28 +219,8 @@ software-engineering-skills/
 
 ## 安装
 
-在新机器上克隆仓库后安装所有 skills：
+在 Claude Code、Codex、Qoder 等智能编程助手中，直接把以下内容发给智能体即可完成安装：
 
-```bash
-git clone https://github.com/nieyuanqing/software-engineering-skills.git ~/software-engineering-skills
-
-# /new-java-project
-mkdir -p ~/.claude/skills/new-java-project
-ln -sf ~/software-engineering-skills/.claude/skills/new-java-project.md \
-       ~/.claude/skills/new-java-project/SKILL.md
-
-# /new-deploy
-mkdir -p ~/.claude/skills/new-deploy
-ln -sf ~/software-engineering-skills/.claude/skills/new-deploy.md \
-       ~/.claude/skills/new-deploy/SKILL.md
-
-# /new-nginx-conf
-mkdir -p ~/.claude/skills/new-nginx-conf
-ln -sf ~/software-engineering-skills/.claude/skills/new-nginx-conf.md \
-       ~/.claude/skills/new-nginx-conf/SKILL.md
-
-# /common-rules
-mkdir -p ~/.claude/skills/common-rules
-ln -sf ~/software-engineering-skills/.claude/skills/common-rules.md \
-       ~/.claude/skills/common-rules/SKILL.md
+```
+安装 skill：https://github.com/nieyuanqing/software-engineering-skills.git
 ```
