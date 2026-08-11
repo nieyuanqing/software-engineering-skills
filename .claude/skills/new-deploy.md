@@ -1,6 +1,6 @@
 ---
 name: new-deploy
-description: 为 Java/Spring Boot 工程生成 scripts/deploy.sh 和 scripts/apply-ssl.sh。deploy.sh 支持本地/远程部署（--remote）、三套环境（dev/test/prod）、backend/web/ssl 目标、inline supervisord 配置、nginx 自动同步、numbered phase 日志、[STATUS] 机器可读输出。当用户要求"生成部署脚本"、"更新 deploy.sh"、"初始化 deploy"时触发。支持 /new-deploy -h 查看帮助。
+description: 为 Java/Spring Boot 工程生成 scripts/deploy.sh 和 scripts/apply-ssl.sh。deploy.sh 支持本地/远程部署（--remote）、三套环境（dev/test/prod）、backend/web/ssl/android/db 目标、inline supervisord 配置、nginx 自动同步、numbered phase 日志、[STATUS] 机器可读输出。当用户要求"生成部署脚本"、"更新 deploy.sh"、"初始化 deploy"时触发。支持 /new-deploy -h 查看帮助。
 ---
 
 # new-deploy
@@ -29,6 +29,7 @@ description: 为 Java/Spring Boot 工程生成 scripts/deploy.sh 和 scripts/app
   --test-domain=DOMAIN    test 环境域名（如 --test-domain=svc.test.example.com）
   --prod-domain=DOMAIN    prod 环境域名（如 --prod-domain=svc.example.com）
   --has-web=true|false    是否有前端静态资源，影响 deploy.sh 默认 target（默认 false）
+  --has-android=true|false  是否有 Android 工程（src/android/），影响 usage 说明（默认 false）
   -h, --help              显示本帮助
 
 生成文件
@@ -36,10 +37,13 @@ description: 为 Java/Spring Boot 工程生成 scripts/deploy.sh 和 scripts/app
   scripts/apply-ssl.sh    SSL 证书申请脚本（Let's Encrypt + acme.sh），deploy.sh 初始化目录时一并上传
 
 deploy.sh 主要能力
-  目标: -t/--target all|backend|web|ssl（默认 all；--has-web=false 时默认 backend）
+  目标: -t/--target all|backend|web|ssl|android|db（默认 all；--has-web=false 时默认 backend）
   环境: -e/--env dev|test|prod（默认 dev）
   远程: -r/--remote USER@HOST（本地 Maven 构建，rsync 上传 JAR，SSH 远程重启）
   ssl:  --target ssl --env test|prod 安装 nginx（apt）+ 主配置 + 站点配置
+  db:   --target db --remote 或 --db（叠加）：pg_dump 本地库 → rsync → 远程 drop+create+restore
+        凭据从 src/backend/<SERVICE_NAME>/.env 读取（DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD）
+        DB_NAME 默认等于 <SERVICE_NAME>，可通过环境变量 DB_NAME=xxx 覆盖
   健康检查: http://127.0.0.1:<APP_PORT>/api/<SERVICE_NAME>/health，最长等待 420s
   supervisord 配置: 部署时 inline 生成，不依赖静态 ini 文件
   env 文件: 按环境选择 .env / .env.test / .env.prod（来自 src/backend/<SERVICE_NAME>/）
@@ -75,6 +79,7 @@ deploy.sh 主要能力
 | `--test-domain=DOMAIN` | `TEST_DOMAIN` |
 | `--prod-domain=DOMAIN` | `PROD_DOMAIN` |
 | `--has-web=true\|false` | `HAS_WEB`（默认 `false`） |
+| `--has-android=true\|false` | `HAS_ANDROID`（默认 `false`） |
 
 ### 1.2 SERVICE_NAME 确定（优先级从高到低）
 
@@ -93,6 +98,7 @@ deploy.sh 主要能力
 | `TEST_DOMAIN` | test 环境域名 | 无 |
 | `PROD_DOMAIN` | prod 环境域名 | 无 |
 | `HAS_WEB` | 是否有前端静态资源（`true`/`false`） | `false` |
+| `HAS_ANDROID` | 是否有 Android 工程（`true`/`false`） | `false` |
 
 所有参数确定后，**向用户回显完整参数列表**，确认无误后再生成文件。
 
@@ -131,6 +137,10 @@ scripts/apply-ssl.sh
 ### `HAS_WEB=false` 时的处理
 
 在生成的 `deploy.sh` 中，将 `parse_deploy_args()` 里 `DEPLOY_WEB` 的初始值从 `true` 改为 `false`，并在 `usage()` 的目标说明处注明"本服务无前端，--target web 和 --target all 不适用"。
+
+### `HAS_ANDROID=true` 时的处理
+
+在生成的 `deploy.sh` 的 `usage()` 中，在 android 目标说明处补充该工程的 Android 目录路径（`src/android/`）说明；其余逻辑无需修改（android target 默认关闭，按需通过 `--target android` 触发）。
 
 ---
 
@@ -176,6 +186,16 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
    # 部署（本机或远程）
    bash scripts/deploy.sh --env test --remote root@<HOST>
    bash scripts/deploy.sh --target ssl --env test --remote root@<HOST>
+
+### 数据库同步（仅同步，不部署代码）
+
+   bash scripts/deploy.sh --target db --remote root@<HOST>
+   # 跳过确认（CI/自动化场景）
+   bash scripts/deploy.sh --target db --remote root@<HOST> --yes
+
+### 数据库 + 后端一起部署
+
+   bash scripts/deploy.sh --target backend --db --env test --remote root@<HOST>
 ```
 
 ---

@@ -41,10 +41,15 @@ Usage:
   bash scripts/deploy.sh [OPTIONS]
 
 Options:
-  -t, --target all|backend|web|ssl
+  -t, --target all|backend|web|ssl|android|db
                   部署目标。默认: all
+                  android 构建 Android APK：不指定 --env 时三套环境全构；
+                  指定 --env dev|test|prod 时只构建该环境。
+                  db 将本地 dev 数据库同步到远程（需 --remote；破坏性：drop+recreate）。
   -e, --env dev|test|prod
                   目标环境（影响 nginx 配置、SSL 证书和 env 文件选择）。默认: dev
+                  android target：dev→assembleDevRelease，test→assembleStagingRelease，
+                  prod→assembleProdRelease（test 对应 staging flavor，Gradle 限制）。
   -r, --remote USER@HOST
                   部署到远程服务器（SSH 密钥认证）。本地构建，rsync 上传，远程重启。
                   示例: root@192.168.1.100
@@ -52,14 +57,23 @@ Options:
       --backend   同 --target backend
       --web       同 --target web
       --ssl       同 --target ssl
-  -y, --yes       跳过二次确认
+      --android   同 --target android
+      --db        叠加数据库同步（可与 --target backend 组合：构建完成后先同步库再重启）
+  -y, --yes       跳过二次确认（db 同步时跳过 drop/recreate 确认）
   -h, --help      显示本帮助
 
 目标说明:
   backend   Maven 构建 JAR → supervisord 管理 → 同步 nginx 站点配置
   web       构建前端静态资源（npm）并部署
   ssl       安装 nginx + SSL 证书配置（需先用 scripts/apply-ssl.sh 申请证书；仅支持 test|prod）
-  all       backend + web（依次执行），ssl 须单独 --target ssl 触发
+  android   Gradle 构建 APK，产物输出到 mobile-apps/（无 SDK 时回退源码包）
+  db        pg_dump 本地 dev 库 → rsync 上传 → 远程 drop+create+restore（需 --remote）
+  all       backend + web（依次执行），ssl/android/db 须单独触发
+
+数据库同步说明:
+  源库凭据从 src/backend/<SERVICE_NAME>/.env 读取（DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD）。
+  --target db            停止服务 → 同步 → 恢复服务（仅数据库，不部署代码）
+  --target backend --db  Maven 构建 → 停止服务 → 同步库 → 上传 JAR → 重启服务
 
 环境说明:
   dev   无域名，HTTP，IP+端口访问（deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf）
@@ -72,6 +86,11 @@ Options:
   bash scripts/deploy.sh --target backend --env test --remote root@192.168.1.100
   bash scripts/deploy.sh --target ssl --env test --remote root@192.168.1.100
   bash scripts/deploy.sh --target ssl --env prod --remote root@192.168.1.100
+  bash scripts/deploy.sh --target android
+  bash scripts/deploy.sh --target android --env prod
+  bash scripts/deploy.sh --target db --remote root@192.168.1.100
+  bash scripts/deploy.sh --target db --remote root@192.168.1.100 --yes
+  bash scripts/deploy.sh --target backend --db --env test --remote root@192.168.1.100
 EOF
 }
 
@@ -404,6 +423,152 @@ sync_nginx_conf() {
     log "nginx 站点配置同步完成（来源: $(basename "$nginx_conf")）"
 }
 
+# ── Android 构建 ──────────────────────────────────────────────────
+
+build_android_app() {
+    local src="$ANDROID_DIR"
+    export ANDROID_HOME="${ANDROID_HOME:-/data/android-sdks}"
+    export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+
+    local gradle_bin=""
+    if [ -x "$src/gradlew" ]; then
+        gradle_bin="$src/gradlew"
+    elif command -v gradle >/dev/null 2>&1; then
+        gradle_bin="gradle"
+    fi
+
+    # flavor 映射：test 环境对应 staging（Gradle 禁止 flavor 名以 test 开头）
+    local envs=() flavors=()
+    case "$DEPLOY_ENV" in
+        dev|test|prod) envs=("$DEPLOY_ENV") ;;
+        *) envs=(dev test prod) ;;
+    esac
+    local i
+    for i in "${envs[@]}"; do
+        if [ "$i" = "test" ]; then flavors+=("staging"); else flavors+=("$i"); fi
+    done
+
+    if [ -n "$gradle_bin" ] && [ -d "$ANDROID_HOME" ]; then
+        local tasks=() f
+        for f in "${flavors[@]}"; do
+            tasks+=("assemble${f^}Release")
+        done
+
+        # 签名凭据来自 src/android/.env（不入库），缺失时回退 debug 签名
+        local sign_args=()
+        if [ -f "$src/.env" ]; then
+            local keystore_env k v
+            keystore_env="$(grep -E '^RELEASE_(STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD)=' "$src/.env" 2>/dev/null)"
+            if [ -n "$keystore_env" ]; then
+                while IFS='=' read -r k v; do
+                    [ -n "$k" ] && sign_args+=("-P$k=$v")
+                done <<< "$keystore_env"
+                log "Android 签名: 使用专属 keystore（$(grep '^RELEASE_STORE_FILE=' "$src/.env" | cut -d= -f2-)）"
+            fi
+        else
+            log "警告: 未找到 $src/.env 签名凭据，release APK 将回退 debug 签名"
+        fi
+
+        log "Gradle 构建 Android APK（envs: ${envs[*]}）... ANDROID_HOME=$ANDROID_HOME"
+        if (cd "$src" && "$gradle_bin" "${tasks[@]}" "${sign_args[@]}" --no-daemon --console=plain); then
+            mkdir -p "$MOBILE_APPS_DIR"
+            local apk idx
+            for idx in "${!envs[@]}"; do
+                f="${flavors[$idx]}"
+                apk="$(find "$src/app/build/outputs/apk/$f/release" -name "*.apk" 2>/dev/null | head -1)"
+                if [ -z "$apk" ]; then
+                    fail "未找到 ${envs[$idx]} 环境 APK 产物，请检查 Gradle 构建输出"
+                fi
+                MOBILE_ANDROID_ARTIFACTS+=("$MOBILE_APPS_DIR/<SERVICE_NAME>-android-${envs[$idx]}-${MOBILE_APP_VERSION}.apk")
+                cp -f "$apk" "${MOBILE_ANDROID_ARTIFACTS[-1]}"
+                log "Android 产物（${envs[$idx]}）: ${MOBILE_ANDROID_ARTIFACTS[-1]}"
+            done
+            MOBILE_ANDROID_MODE="APK（Gradle 构建，envs: ${envs[*]}）"
+            return
+        fi
+        fail "Android 构建失败，请检查 Gradle/Android SDK 环境"
+    fi
+
+    log "未检测到 Gradle + Android SDK（$ANDROID_HOME），回退为源码打包"
+    mkdir -p "$MOBILE_APPS_DIR"
+    MOBILE_ANDROID_ARTIFACTS=("$MOBILE_APPS_DIR/android-src-${MOBILE_APP_VERSION}.tar.gz")
+    tar -czf "${MOBILE_ANDROID_ARTIFACTS[0]}" -C "$(dirname "$src")" "$(basename "$src")"
+    MOBILE_ANDROID_MODE="源码包（本机无 Android 工具链）"
+    log "Android 产物: ${MOBILE_ANDROID_ARTIFACTS[0]}"
+}
+
+# ── 数据库同步（PostgreSQL） ───────────────────────────────────────
+
+read_env_value() {
+    local file="$1" key="$2"
+    [ -f "$file" ] || return 1
+    sed -n "s/^${key}=//p" "$file" | head -1
+}
+
+stop_service() {
+    log "停止服务: <SERVICE_NAME>"
+    if [ -n "$REMOTE_HOST" ]; then
+        remote_exec "supervisorctl -c $SUPERVISOR_CONF stop <SERVICE_NAME>" || true
+    else
+        supervisorctl -c "$SUPERVISOR_CONF" stop "<SERVICE_NAME>" || true
+    fi
+}
+
+start_service() {
+    log "启动服务: <SERVICE_NAME>"
+    if [ -n "$REMOTE_HOST" ]; then
+        remote_exec "supervisorctl -c $SUPERVISOR_CONF reread && supervisorctl -c $SUPERVISOR_CONF update" || true
+        remote_exec "supervisorctl -c $SUPERVISOR_CONF start <SERVICE_NAME>" || true
+    else
+        supervisorctl -c "$SUPERVISOR_CONF" reread
+        supervisorctl -c "$SUPERVISOR_CONF" update
+        supervisorctl -c "$SUPERVISOR_CONF" start "<SERVICE_NAME>" || true
+    fi
+}
+
+sync_database() {
+    local src_env_file="$BACKEND_DIR/.env"
+    [ -f "$src_env_file" ] || fail "源库 env 文件不存在: $src_env_file（数据库同步需要 dev .env）"
+
+    local src_host src_port src_user src_password
+    src_host="$(read_env_value "$src_env_file" DB_HOST)";     src_host="${src_host:-127.0.0.1}"
+    src_port="$(read_env_value "$src_env_file" DB_PORT)";     src_port="${src_port:-5432}"
+    src_user="$(read_env_value "$src_env_file" DB_USERNAME)"; src_user="${src_user:-postgres}"
+    src_password="$(read_env_value "$src_env_file" DB_PASSWORD)"
+    [ -n "$src_password" ] || fail "无法从 $src_env_file 读取 DB_PASSWORD"
+
+    if [ "$AUTO_CONFIRM" != true ]; then
+        log "警告: 此操作将删除并重建 $REMOTE_HOST 上的数据库: $DB_NAME"
+        printf "输入 yes 确认继续: "
+        local confirm
+        read -r confirm
+        [ "$confirm" = "yes" ] || fail "已取消数据库同步"
+    fi
+
+    local ts dump_file
+    ts="$(date '+%Y%m%d%H%M%S')"
+    dump_file="$RUNTIME_DIR/db-sync-${DB_NAME}-${ts}.sql"
+
+    log "导出本地数据库: $DB_NAME（$src_host:$src_port）"
+    PGPASSWORD="$src_password" pg_dump \
+        -h "$src_host" -p "$src_port" -U "$src_user" \
+        -d "$DB_NAME" --no-owner --no-privileges \
+        -f "$dump_file" || fail "pg_dump 失败: $DB_NAME"
+
+    log "上传 dump 到 $REMOTE_HOST:/tmp/${DB_NAME}.sql"
+    rsync -az "$dump_file" "$REMOTE_HOST:/tmp/${DB_NAME}.sql"
+    remote_exec "chmod 644 /tmp/${DB_NAME}.sql"
+
+    log "远程重建数据库: $DB_NAME（断开连接 → drop → create → restore）"
+    remote_exec "sudo -u postgres psql -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$DB_NAME' AND pid<>pg_backend_pid();\" >/dev/null 2>&1" || true
+    remote_exec "sudo -u postgres dropdb --if-exists $DB_NAME"  || fail "远程 dropdb 失败: $DB_NAME"
+    remote_exec "sudo -u postgres createdb $DB_NAME"             || fail "远程 createdb 失败: $DB_NAME"
+    remote_exec "sudo -u postgres psql -v ON_ERROR_STOP=1 -d $DB_NAME -f /tmp/${DB_NAME}.sql >/dev/null" \
+        || fail "远程恢复失败: $DB_NAME"
+    remote_exec "rm -f /tmp/${DB_NAME}.sql"
+    log "数据库同步完成: $DB_NAME → $REMOTE_HOST"
+}
+
 # ── 参数解析 ─────────────────────────────────────────────────────
 
 set_deploy_target() {
@@ -425,8 +590,19 @@ set_deploy_target() {
             DEPLOY_WEB=false
             DEPLOY_SSL=true
             ;;
+        android)
+            DEPLOY_BACKEND=false
+            DEPLOY_WEB=false
+            DEPLOY_ANDROID=true
+            ;;
+        db|database)
+            DEPLOY_BACKEND=false
+            DEPLOY_WEB=false
+            DEPLOY_DB=true
+            DB_ONLY=true
+            ;;
         *)
-            fail "未知部署目标: $1；可选值: all, backend, web, ssl"
+            fail "未知部署目标: $1；可选值: all, backend, web, ssl, android, db"
             ;;
     esac
 }
@@ -437,6 +613,9 @@ parse_deploy_args() {
     DEPLOY_BACKEND=true
     DEPLOY_WEB=true
     DEPLOY_SSL=false
+    DEPLOY_ANDROID=false
+    DEPLOY_DB=false
+    DB_ONLY=false
     AUTO_CONFIRM=false
 
     while [ "$#" -gt 0 ]; do
@@ -455,6 +634,11 @@ parse_deploy_args() {
             --backend)     set_deploy_target "backend"; target_set=true; shift ;;
             --web)         set_deploy_target "web";     target_set=true; shift ;;
             --ssl|--nginx) set_deploy_target "ssl";     target_set=true; shift ;;
+            --android)     set_deploy_target "android"; target_set=true; shift ;;
+            --db|--database)
+                DEPLOY_DB=true
+                shift
+                ;;
             -e|--env)
                 [ "$#" -ge 2 ] || fail "$1 缺少参数"
                 case "$2" in
@@ -479,6 +663,15 @@ parse_deploy_args() {
         esac
     done
 
+    if [ "$DB_ONLY" = true ]; then
+        DEPLOY_BACKEND=false
+        DEPLOY_WEB=false
+        DEPLOY_SSL=false
+        DEPLOY_ANDROID=false
+    fi
+    if [ "$DEPLOY_DB" = true ]; then
+        [ -n "$REMOTE_HOST" ] || fail "--db / --target db 需要指定 --remote USER@HOST"
+    fi
     if [ "$DEPLOY_SSL" = true ] && [ -z "$DEPLOY_ENV" ]; then
         if [ "$DEPLOY_BACKEND" = false ] && [ "$DEPLOY_WEB" = false ]; then
             fail "--target ssl 需要指定 --env test|prod"
@@ -489,7 +682,7 @@ parse_deploy_args() {
     if [ "$DEPLOY_SSL" = true ] && [ "${DEPLOY_ENV:-}" = "dev" ]; then
         fail "--target ssl 仅支持 --env test|prod（dev 为 HTTP 明文环境）"
     fi
-    if [ "$DEPLOY_BACKEND" = false ] && [ "$DEPLOY_WEB" = false ] && [ "$DEPLOY_SSL" = false ]; then
+    if [ "$DEPLOY_BACKEND" = false ] && [ "$DEPLOY_WEB" = false ] && [ "$DEPLOY_SSL" = false ] && [ "$DEPLOY_ANDROID" = false ] && [ "$DEPLOY_DB" = false ]; then
         fail "未选择任何部署内容"
     fi
 }
@@ -514,7 +707,10 @@ REMOTE_HOST=""
 DEPLOY_ENV=""
 BACKEND_DIR="$PROJECT_DIR/src/backend/<SERVICE_NAME>"
 WEB_DIR="$PROJECT_DIR/src/web"
+ANDROID_DIR="$PROJECT_DIR/src/android"
+MOBILE_APPS_DIR="$PROJECT_DIR/mobile-apps"
 DEPLOY_CONF_DIR="$PROJECT_DIR/deploy-conf"
+DB_NAME="${DB_NAME:-<SERVICE_NAME>}"
 APP_DIR="/opt/soft/apps/<SERVICE_NAME>"
 LOG_DIR="/data/logs/apps/<SERVICE_NAME>"
 WEB_DEPLOY_PATH="${WEB_DEPLOY_PATH:-$APP_DIR/web}"
@@ -543,12 +739,35 @@ if [ "$DEPLOY_WEB" = true ]; then
     fi
     [ -f "$WEB_DIR/package.json" ] || fail "package.json 不存在: $WEB_DIR/package.json"
 fi
+if [ "$DEPLOY_ANDROID" = true ]; then
+    [ -d "$ANDROID_DIR" ] || fail "Android 项目目录不存在: $ANDROID_DIR"
+    if [ ! -x "$ANDROID_DIR/gradlew" ]; then
+        require_command gradle
+    fi
+fi
+if [ "$DEPLOY_DB" = true ]; then
+    require_command pg_dump
+    require_command psql
+    require_command ssh
+    require_command rsync
+fi
 
 # ── 版本读取 ─────────────────────────────────────────────────────
 BACKEND_VERSION="-"
 if [ "$DEPLOY_BACKEND" = true ]; then
     BACKEND_VERSION="$(read_backend_version "$BACKEND_DIR/pom.xml")"
     [ -n "$BACKEND_VERSION" ] || fail "无法从 pom.xml 读取 <SERVICE_NAME> 版本"
+fi
+
+MOBILE_APP_VERSION="1.0.0"
+MOBILE_ANDROID_ARTIFACTS=()
+MOBILE_ANDROID_MODE=""
+if [ "$DEPLOY_ANDROID" = true ]; then
+    if [ -f "$ANDROID_DIR/app/build.gradle" ]; then
+        _ver="$(grep -E 'versionName\s+"[^"]+"' "$ANDROID_DIR/app/build.gradle" 2>/dev/null \
+            | sed -E 's/.*versionName[[:space:]]+"([^"]+)".*/\1/' | head -1)"
+        [ -n "$_ver" ] && MOBILE_APP_VERSION="$_ver"
+    fi
 fi
 
 # 后端部署后自动同步 nginx 站点配置（--target ssl 完整安装流程除外）
@@ -562,6 +781,8 @@ DEPLOY_TARGETS=()
 [ "$DEPLOY_BACKEND" = true ] && DEPLOY_TARGETS+=("backend")
 [ "$DEPLOY_WEB" = true ]     && DEPLOY_TARGETS+=("web")
 [ "$DEPLOY_SSL" = true ]     && DEPLOY_TARGETS+=("ssl")
+[ "$DEPLOY_ANDROID" = true ] && DEPLOY_TARGETS+=("android")
+[ "$DEPLOY_DB" = true ]     && DEPLOY_TARGETS+=("db")
 log "本次部署目标   : ${DEPLOY_TARGETS[*]:-（无）}"
 log "  目标环境       : ${DEPLOY_ENV:-dev}"
 log "  部署位置       : ${REMOTE_HOST:-本机}"
@@ -573,11 +794,23 @@ if [ "$DEPLOY_BACKEND" = true ]; then
     log "  后端版本       : $BACKEND_VERSION"
 fi
 [ "$DEPLOY_WEB" = true ] && log "  前端目录       : $WEB_DIR"
+if [ "$DEPLOY_ANDROID" = true ]; then
+    log "  Android 目录   : $ANDROID_DIR"
+    if [ -n "$DEPLOY_ENV" ]; then
+        log "  Android 环境   : 仅 $DEPLOY_ENV"
+    else
+        log "  Android 环境   : 全部（dev test prod）"
+    fi
+fi
+if [ "$DEPLOY_DB" = true ]; then
+    log "  数据库同步     : $DB_NAME → $REMOTE_HOST（本地 pg_dump，远程 drop+recreate）"
+fi
 log "======================================================"
 
 mkdir -p "$RUNTIME_DIR"
 
-# ── 初始化部署目录 ────────────────────────────────────────────────
+# ── 初始化部署目录（db-only 时跳过，避免在纯数据库同步场景创建无关目录）────
+if [ "$DB_ONLY" = false ]; then
 if [ -n "$REMOTE_HOST" ]; then
     log "初始化远程目录: $APP_DIR, $LOG_DIR, $SUPERVISOR_CONF_DIR"
     remote_exec "mkdir -p $APP_DIR $LOG_DIR $WEB_DEPLOY_PATH $SUPERVISOR_CONF_DIR /data/logs/nginx"
@@ -591,6 +824,7 @@ else
     cp -f "$SCRIPT_DIR/apply-ssl.sh" "$APP_DIR/apply-ssl.sh"
     chmod +x "$APP_DIR/apply-ssl.sh"
 fi
+fi
 
 # ── Phase 计数 ───────────────────────────────────────────────────
 PHASE_TOTAL=0
@@ -598,7 +832,18 @@ PHASE_TOTAL=0
 [ "$DEPLOY_WEB" = true ]        && PHASE_TOTAL=$((PHASE_TOTAL + 1))
 [ "$DEPLOY_SSL" = true ]        && PHASE_TOTAL=$((PHASE_TOTAL + 1))
 [ "$NEED_NGINX_SYNC" = true ]   && PHASE_TOTAL=$((PHASE_TOTAL + 1))
+[ "$DEPLOY_ANDROID" = true ]    && PHASE_TOTAL=$((PHASE_TOTAL + 1))
+[ "$DEPLOY_DB" = true ]         && PHASE_TOTAL=$((PHASE_TOTAL + 1))
 PHASE_INDEX=1
+
+# ── 数据库同步（仅 --target db）──────────────────────────────────
+if [ "$DEPLOY_DB" = true ] && [ "$DB_ONLY" = true ]; then
+    log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 同步数据库到 $REMOTE_HOST（停止服务→同步→恢复） =========="
+    PHASE_INDEX=$((PHASE_INDEX + 1))
+    stop_service
+    sync_database
+    start_service
+fi
 
 # ── 后端部署 ─────────────────────────────────────────────────────
 if [ "$DEPLOY_BACKEND" = true ]; then
@@ -610,6 +855,13 @@ if [ "$DEPLOY_BACKEND" = true ]; then
         fail_maven_build "$MVN_LOG_FILE"
     fi
     log "Maven 构建完成"
+
+    if [ "$DEPLOY_DB" = true ]; then
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 停止服务并同步数据库到 $REMOTE_HOST =========="
+        PHASE_INDEX=$((PHASE_INDEX + 1))
+        stop_service
+        sync_database
+    fi
 
     if [ -n "$REMOTE_HOST" ]; then
         log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 上传 JAR 到 $REMOTE_HOST =========="
@@ -658,6 +910,13 @@ if [ "$DEPLOY_WEB" = true ]; then
     log "前端已部署到: $WEB_DEPLOY_PATH"
 fi
 
+# ── Android 构建 ─────────────────────────────────────────────────
+if [ "$DEPLOY_ANDROID" = true ]; then
+    log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 构建 Android 应用 =========="
+    PHASE_INDEX=$((PHASE_INDEX + 1))
+    build_android_app
+fi
+
 # ── SSL / Nginx 部署 ──────────────────────────────────────────────
 if [ "$DEPLOY_SSL" = true ]; then
     log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 部署 SSL 证书和 Nginx 配置（${DEPLOY_ENV}）=========="
@@ -666,7 +925,11 @@ fi
 
 # ── [STATUS] 机器可读输出 ─────────────────────────────────────────
 log "部署完成"
-if [ -n "$REMOTE_HOST" ]; then
+if [ "$DEPLOY_DB" = true ] && [ "$DB_ONLY" = true ]; then
+    echo "[STATUS] OK - 数据库已同步到 $REMOTE_HOST（$DB_NAME）"
+elif [ "$DEPLOY_ANDROID" = true ]; then
+    echo "[STATUS] OK - Android 构建完成，产物见 mobile-apps/"
+elif [ -n "$REMOTE_HOST" ]; then
     echo "[STATUS] OK - 已远程部署到 $REMOTE_HOST（${DEPLOY_TARGETS[*]}）"
 elif [ "$DEPLOY_SSL" = true ] && [ "$DEPLOY_BACKEND" = false ] && [ "$DEPLOY_WEB" = false ]; then
     echo "[STATUS] OK - SSL/Nginx 已部署（环境: ${DEPLOY_ENV}）"
@@ -715,5 +978,17 @@ if [ "$DEPLOY_WEB" = true ]; then
 fi
 if [ "$DEPLOY_SSL" = true ]; then
     echo "    Nginx 站点配置: ${SUMMARY_HOST_PREFIX}/etc/nginx/conf.d/<SERVICE_NAME>.conf"
+fi
+if [ "$DEPLOY_DB" = true ]; then
+    echo "    数据库同步     : $DB_NAME → $REMOTE_HOST（本地 pg_dump，远程 drop+recreate）"
+    echo "    dump 缓存      : $RUNTIME_DIR/db-sync-${DB_NAME}-*.sql"
+fi
+if [ "$DEPLOY_ANDROID" = true ] && [ "${#MOBILE_ANDROID_ARTIFACTS[@]}" -gt 0 ]; then
+    echo
+    echo "  ▍Android 产物（mobile-apps/）"
+    for artifact in "${MOBILE_ANDROID_ARTIFACTS[@]}"; do
+        echo "    Android    : $artifact"
+    done
+    echo "    构建模式   : $MOBILE_ANDROID_MODE"
 fi
 echo "══════════════════════════════════════════════════════"
