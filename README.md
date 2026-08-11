@@ -8,7 +8,8 @@
 
 | Skill | 说明 |
 |---|---|
-| [`/new-java-project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、supervisord、env、specs 文档） |
+| [`/new-java-project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、env、Spring Boot yml、specs 文档） |
+| [`/new-deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
 | [`/new-nginx-conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/`，不含任何具体项目的定制内容 |
 | [`/common-rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
 
@@ -28,7 +29,9 @@ software-engineering-skills/
 │                                      （JDK、PostgreSQL、Spring Boot 等基线版本）
 ├── templates/
 │   ├── scripts/
-│   │   ├── deploy.sh             部署脚本模板（backend/web/all 三个 target，含健康检查、版本化 jar + --rollback 回滚、结构化部署摘要）
+│   │   ├── deploy.sh             部署脚本模板（backend/web/ssl 三个 target；本地/远程部署；
+│   │   │                         inline supervisord 配置；nginx 自动同步；Phase N/M 日志；
+│   │   │                         [STATUS] 机器可读输出；420s 健康检查；部署摘要）
 │   │   └── apply-ssl.sh          SSL 证书申请脚本模板（Let's Encrypt + acme.sh）
 │   ├── deploy-conf/
 │   │   ├── nginx/                 nginx 配置目录（/new-nginx-conf 与 /new-java-project 共用）
@@ -43,13 +46,13 @@ software-engineering-skills/
 │   │   │       ├── service.dev.conf  nginx vhost 模板（/new-java-project 所属，dev 环境，HTTP/IP+端口）
 │   │   │       ├── service.test.conf nginx vhost 模板（/new-java-project 所属，test 环境，HTTPS/域名）
 │   │   │       └── service.prod.conf nginx vhost 模板（/new-java-project 所属，prod 环境，HTTPS/域名）
-│   │   ├── supervisor/
-│   │   │   ├── service.dev.ini   supervisord 程序配置模板（dev，--spring.profiles.active=dev）
-│   │   │   ├── service.test.ini  supervisord 程序配置模板（test）
-│   │   │   └── service.prod.ini  supervisord 程序配置模板（prod）
-│   │   ├── env.dev.example       环境变量模板（dev，JWT 可用占位符）
-│   │   ├── env.test.example      环境变量模板（test，建议随机 JWT）
-│   │   └── env.prod.example      环境变量模板（prod，JWT 必须真实值）
+│   │   ├── supervisor/             （参考模板，不再由 skill 生成；supervisord 配置现由 deploy.sh 在部署时 inline 生成）
+│   │   │   ├── service.dev.ini
+│   │   │   ├── service.test.ini
+│   │   │   └── service.prod.ini
+│   │   ├── env.dev.example       环境变量模板（dev，含 SPRING_PROFILES_ACTIVE=dev）
+│   │   ├── env.test.example      环境变量模板（test，含 SPRING_PROFILES_ACTIVE=test）
+│   │   └── env.prod.example      环境变量模板（prod，含 SPRING_PROFILES_ACTIVE=prod）
 │   └── src/main/resources/
 │       ├── application.yml       Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
 │       ├── application-dev.yml   dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
@@ -57,7 +60,8 @@ software-engineering-skills/
 │       └── application-prod.yml  prod profile（WARN 日志，Swagger 关闭）
 └── .claude/
     └── skills/
-        ├── new-java-project.md   Claude Code skill 定义（为 Java/Spring Boot 工程生成部署配置）
+        ├── new-java-project.md   Claude Code skill 定义（为 Java/Spring Boot 工程生成完整部署配置）
+        ├── new-deploy.md         Claude Code skill 定义（单独生成/更新 deploy.sh 和 apply-ssl.sh）
         ├── new-nginx-conf.md     Claude Code skill 定义（生成标准通用的 nginx 主配置目录）
         └── common-rules.md       Claude Code skill 定义（通用行为规范：任务摘要、v0 文档保护、禁止硬编码）
 ```
@@ -88,23 +92,73 @@ software-engineering-skills/
 
 | 文件 | 说明 |
 |---|---|
-| `scripts/deploy.sh` | 部署脚本（构建 jar、版本化部署 + `--rollback` 回滚、supervisord 管理、健康检查轮询、nginx 安装、结构化部署摘要） |
+| `scripts/deploy.sh` | 部署脚本（见下方"deploy.sh 能力"） |
 | `scripts/apply-ssl.sh` | SSL 证书申请（Let's Encrypt + acme.sh，HTTP-01 webroot 验证） |
 | `deploy-conf/nginx/vhosts/<name>.dev.conf` | nginx vhost — dev 环境（HTTP，无域名） |
 | `deploy-conf/nginx/vhosts/<name>.test.conf` | nginx vhost — test 环境（HTTPS，绑定测试域名） |
 | `deploy-conf/nginx/vhosts/<name>.prod.conf` | nginx vhost — prod 环境（HTTPS，绑定生产域名） |
-| `deploy-conf/supervisor/<name>.{dev,test,prod}.ini` | supervisord 程序配置三套（`--spring.profiles.active` 各自对应环境） |
-| `deploy-conf/env.{dev,test,prod}.example` | 环境变量模板三套（JWT 要求强度依次递增），复制为 `.env` 后填入真实值 |
+| `deploy-conf/env.{dev,test,prod}.example` | 环境变量模板三套（含 `SPRING_PROFILES_ACTIVE`，复制为 `.env` 后填入真实值） |
 | `src/backend/<name>/src/main/resources/application.yml` | Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点） |
 | `src/backend/<name>/src/main/resources/application-{dev,test,prod}.yml` | Spring Boot profile 配置三套（日志级别、SQL 调试、Swagger 开关） |
 | `specs/deployment.md` | 本工程专属部署规范文档 |
 | `specs/baseline-versions.md` | 基线版本规范（JDK、PostgreSQL、Spring Boot 等） |
 
+**deploy.sh 能力**（见下方 [`/new-deploy`](#new-deploy) 节的详细说明）：
+- `-t/--target all|backend|web|ssl`，`-e/--env dev|test|prod`
+- `-r/--remote USER@HOST` 远程部署（本地构建，rsync 上传，SSH 重启）
+- `--target ssl` 安装 nginx（apt）+ SSL 证书配置
+- supervisord 配置在部署时 inline 生成，Spring 环境通过 `.env` 中的 `SPRING_PROFILES_ACTIVE` 传递
+- Phase N/M 阶段日志，`[STATUS] OK/ERROR` 机器可读输出，420s 健康检查
+
 **所有产物遵循的通用规范**（见 `specs/deployment-common.md`）：
 - 目录约定：`/opt/soft/apps/<name>/`、`/data/logs/apps/<name>/`
-- 健康检查端点：`/api/<name>/health`（Spring Boot Actuator，`startsecs=3`）
-- 部署日志格式：`[YYYY-MM-DD HH:MM:SS] ===== <模块名> =====`
+- 健康检查端点：`/api/<name>/health`（Spring Boot Actuator，`startsecs=10`，最长等待 420s）
+- 部署日志格式：`[YYYY-MM-DD HH:MM:SS] [deploy.sh] ...`，阶段编号：`Phase N/M`
 - 共享主机安全规范：不自动 `systemctl start supervisor`，不随意改动其他项目配置
+
+---
+
+### `/new-deploy`
+
+单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh`。适用于只需要更新部署脚本、不需要重新生成完整配置套件的场景。
+
+**用法**
+
+```bash
+/new-deploy                                # 交互式，以当前目录名为默认服务名
+/new-deploy my-service                     # 直接指定服务名
+/new-deploy my-service \
+  --app-port=8080 --nginx-port=9090 \
+  --test-domain=svc.test.example.com \
+  --prod-domain=svc.example.com \
+  --has-web=false                          # 全参数指定，无需交互
+/new-deploy -h                             # 查看帮助
+```
+
+**生成产物**
+
+| 文件 | 说明 |
+|---|---|
+| `scripts/deploy.sh` | 部署脚本 |
+| `scripts/apply-ssl.sh` | SSL 证书申请脚本（deploy.sh 初始化目录时一并上传到服务器） |
+
+**deploy.sh 主要能力**
+
+| 能力 | 说明 |
+|---|---|
+| `--target all\|backend\|web\|ssl` | 部署目标（`-t` 简写） |
+| `--env dev\|test\|prod` | 目标环境（`-e` 简写），默认 `dev` |
+| `--remote USER@HOST` | 远程部署（`-r` 简写）：本地 Maven 构建，rsync 上传 JAR，SSH 远程重启 |
+| `--target ssl` | 完整 nginx 安装（apt）+ 主配置 + 站点配置；仅支持 `test\|prod` |
+| 自动 nginx 同步 | backend 部署后自动同步站点配置并 reload（目标已装 nginx 时） |
+| inline supervisord 配置 | 部署时写入 `/etc/supervisor/conf.d/<name>.conf`，不依赖静态 ini 文件 |
+| env 文件按环境选择 | 自动选取 `.env` / `.env.test` / `.env.prod`（来自 `src/backend/<name>/`） |
+| Phase N/M 日志 | 编号阶段日志，`[STATUS] OK/ERROR` 机器可读输出行 |
+| 健康检查 | `http://127.0.0.1:<APP_PORT>/api/<name>/health`，最长等待 420s |
+| 版本化 JAR + 软链接 | `<name>-<version>.jar` + `<name>.jar` 软链接，支持手动回滚 |
+| 部署摘要 | 自动探测公网 IP，输出三套环境的访问地址和产物位置 |
+
+---
 
 ### `/new-nginx-conf`
 
@@ -145,6 +199,8 @@ software-engineering-skills/
 是否覆盖主机上现有的 `/opt/soft/nginx/conf` 需要用户自行确认后操作（见
 `specs/deployment-common.md` 第三节共享基础设施操作规范）。
 
+---
+
 ### `/common-rules`
 
 通用行为规范，调用后对当前会话的所有任务生效：
@@ -172,6 +228,11 @@ git clone https://github.com/nieyuanqing/software-engineering-skills.git ~/softw
 mkdir -p ~/.claude/skills/new-java-project
 ln -sf ~/software-engineering-skills/.claude/skills/new-java-project.md \
        ~/.claude/skills/new-java-project/SKILL.md
+
+# /new-deploy
+mkdir -p ~/.claude/skills/new-deploy
+ln -sf ~/software-engineering-skills/.claude/skills/new-deploy.md \
+       ~/.claude/skills/new-deploy/SKILL.md
 
 # /new-nginx-conf
 mkdir -p ~/.claude/skills/new-nginx-conf
