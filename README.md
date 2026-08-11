@@ -8,10 +8,10 @@
 
 | Skill | 说明 |
 |:------------------------------------------------------|---|
-| [`/new-java-project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、env、Spring Boot yml、specs 文档） |
-| [`/new-deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
-| [`/new-nginx-conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/`，不含任何具体项目的定制内容 |
-| [`/common-rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
+| <nobr>[`/new-java-project`](#new-java-project)</nobr> | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、env、Spring Boot yml、specs 文档） |
+| <nobr>[`/new-deploy`](#new-deploy)</nobr> | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
+| <nobr>[`/new-nginx-conf`](#new-nginx-conf)</nobr> | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/`，不含任何具体项目的定制内容 |
+| <nobr>[`/common-rules`](#common-rules)</nobr> | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
 
 逐个 skill 的详细用法见下方对应章节。
 
