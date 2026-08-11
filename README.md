@@ -50,9 +50,9 @@ software-engineering-skills/
 │   │   │   ├── service.dev.ini
 │   │   │   ├── service.test.ini
 │   │   │   └── service.prod.ini
-│   │   ├── env.dev.example       环境变量模板（dev，含 SPRING_PROFILES_ACTIVE=dev）
-│   │   ├── env.test.example      环境变量模板（test，含 SPRING_PROFILES_ACTIVE=test）
-│   │   └── env.prod.example      环境变量模板（prod，含 SPRING_PROFILES_ACTIVE=prod）
+│   │   ├── env.dev       环境变量模板（dev，含 SPRING_PROFILES_ACTIVE=dev）
+│   │   ├── env.test      环境变量模板（test，含 SPRING_PROFILES_ACTIVE=test）
+│   │   └── env.prod      环境变量模板（prod，含 SPRING_PROFILES_ACTIVE=prod）
 │   └── src/main/resources/
 │       ├── application.yml       Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
 │       ├── application-dev.yml   dev profile（show-sql=true，DEBUG 日志，Swagger 开启）

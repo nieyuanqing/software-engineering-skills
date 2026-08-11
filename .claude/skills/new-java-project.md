@@ -44,9 +44,9 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
     - deploy-conf/nginx/vhosts/<name>.dev.conf    nginx vhost（dev 环境，HTTP/IP+端口）
     - deploy-conf/nginx/vhosts/<name>.test.conf   nginx vhost（test 环境，HTTPS/域名）
     - deploy-conf/nginx/vhosts/<name>.prod.conf   nginx vhost（prod 环境，HTTPS/域名）
-    - deploy-conf/env.dev.example             环境变量模板（dev 环境，含 SPRING_PROFILES_ACTIVE=dev）
-    - deploy-conf/env.test.example            环境变量模板（test 环境，含 SPRING_PROFILES_ACTIVE=test）
-    - deploy-conf/env.prod.example            环境变量模板（prod 环境，含 SPRING_PROFILES_ACTIVE=prod）
+    - deploy-conf/env.dev             环境变量模板（dev 环境，含 SPRING_PROFILES_ACTIVE=dev）
+    - deploy-conf/env.test            环境变量模板（test 环境，含 SPRING_PROFILES_ACTIVE=test）
+    - deploy-conf/env.prod            环境变量模板（prod 环境，含 SPRING_PROFILES_ACTIVE=prod）
     - src/backend/<name>/src/main/resources/application.yml          Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
     - src/backend/<name>/src/main/resources/application-dev.yml      dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
     - src/backend/<name>/src/main/resources/application-test.yml     test profile（INFO 日志，Swagger 开启）
@@ -154,9 +154,9 @@ scripts/apply-ssl.sh
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf
-deploy-conf/env.dev.example
-deploy-conf/env.test.example
-deploy-conf/env.prod.example
+deploy-conf/env.dev
+deploy-conf/env.test
+deploy-conf/env.prod
 src/backend/<SERVICE_NAME>/src/main/resources/application.yml
 src/backend/<SERVICE_NAME>/src/main/resources/application-dev.yml
 src/backend/<SERVICE_NAME>/src/main/resources/application-test.yml
@@ -195,9 +195,9 @@ specs/baseline-versions.md
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.dev.conf` |
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.test.conf` |
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.prod.conf` |
-| `deploy-conf/env.dev.example` | `software-engineering-skills/templates/deploy-conf/env.dev.example` |
-| `deploy-conf/env.test.example` | `software-engineering-skills/templates/deploy-conf/env.test.example` |
-| `deploy-conf/env.prod.example` | `software-engineering-skills/templates/deploy-conf/env.prod.example` |
+| `deploy-conf/env.dev` | `software-engineering-skills/templates/deploy-conf/env.dev` |
+| `deploy-conf/env.test` | `software-engineering-skills/templates/deploy-conf/env.test` |
+| `deploy-conf/env.prod` | `software-engineering-skills/templates/deploy-conf/env.prod` |
 | `src/backend/<SERVICE_NAME>/src/main/resources/application.yml` | `software-engineering-skills/templates/src/main/resources/application.yml` |
 | `src/backend/<SERVICE_NAME>/src/main/resources/application-dev.yml` | `software-engineering-skills/templates/src/main/resources/application-dev.yml` |
 | `src/backend/<SERVICE_NAME>/src/main/resources/application-test.yml` | `software-engineering-skills/templates/src/main/resources/application-test.yml` |
@@ -257,7 +257,7 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
    sudo -u postgres createdb -O <DB_NAME> <DB_NAME>
 
 3. 配置 dev 环境变量：
-   cp deploy-conf/env.dev.example src/backend/<SERVICE_NAME>/.env
+   cp deploy-conf/env.dev src/backend/<SERVICE_NAME>/.env
    vim src/backend/<SERVICE_NAME>/.env   # 填入真实凭证
 
 4. 执行部署：
@@ -266,8 +266,8 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
 ### 首次部署（dev 环境，远程服务器）
 
 1. 配置远程服务器的 dev 环境变量：
-   rsync deploy-conf/env.dev.example root@<HOST>:/tmp/env.dev.example
-   ssh root@<HOST> "cp /tmp/env.dev.example /path/.env && vim /path/.env"
+   rsync deploy-conf/env.dev root@<HOST>:/tmp/env.dev
+   ssh root@<HOST> "cp /tmp/env.dev /path/.env && vim /path/.env"
 
 2. 执行远程部署：
    bash scripts/deploy.sh --remote root@<HOST>
@@ -277,7 +277,7 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
 在对应机器上：
 1. 确认域名已解析到这台机器
 2. 申请 SSL 证书：bash scripts/apply-ssl.sh test  （或 prod）
-3. 配置环境变量：cp deploy-conf/env.test.example src/backend/<SERVICE_NAME>/.env.test  并填入真实凭证
+3. 配置环境变量：cp deploy-conf/env.test src/backend/<SERVICE_NAME>/.env.test  并填入真实凭证
 4. 执行部署：
    bash scripts/deploy.sh --env test --remote root@<HOST>
    bash scripts/deploy.sh --target ssl --env test --remote root@<HOST>

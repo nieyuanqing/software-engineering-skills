@@ -159,7 +159,7 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
    ss -tln | grep -E ':(<NGINX_PORT>|<APP_PORT>)\b'
 
 2. 配置 dev 环境变量（deploy.sh 从 src/backend/<SERVICE_NAME>/.env 读取）：
-   cp deploy-conf/env.dev.example src/backend/<SERVICE_NAME>/.env
+   cp deploy-conf/env.dev src/backend/<SERVICE_NAME>/.env
    vim src/backend/<SERVICE_NAME>/.env
 
 3. 执行部署：
