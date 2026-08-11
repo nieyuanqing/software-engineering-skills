@@ -7,7 +7,7 @@
 ## Skills 列表
 
 | Skill | 说明 |
-|---|---|
+|:------------------------------------------------------|---|
 | [`/new-java-project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、env、Spring Boot yml、specs 文档） |
 | [`/new-deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
 | [`/new-nginx-conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/`，不含任何具体项目的定制内容 |
