@@ -1,6 +1,6 @@
 ---
 name: common-rules
-description: 通用行为规范，适用于所有任务：每次任务完成后输出结果清单、影响范围和开始/结束时间；禁止修改 v0 原始产品设计文档（只读）；禁止在代码、配置、脚本中硬编码任何敏感信息。
+description: 通用行为规范，适用于所有任务：每次任务完成后输出结果清单、影响范围和开始/结束时间；禁止修改 v0 原始产品设计文档（只读）；禁止在代码、配置、脚本中硬编码任何敏感信息；git commit message 必须使用结构化格式。
 ---
 
 # common-rules
@@ -42,6 +42,32 @@ description: 通用行为规范，适用于所有任务：每次任务完成后�
     - 运行时配置使用环境变量：${DB_PASSWORD}、${JWT_SECRET}
     - 模板 / 示例文件使用语义占位符：changeme、<YOUR_API_KEY>
     - 发现存量硬编码时立即告知用户，不继续扩展，建议替换为环境变量
+
+规范四：git commit message 结构化格式
+  每次 git 提交前，必须按以下结构组织 commit message，禁止使用无意义的单行描述：
+
+  <类型>: <简短描述>（不超过 72 字符）
+
+  [可选正文：说明做了什么、为什么这样做，每行不超过 72 字符]
+
+  类型取值：
+    feat     新功能
+    fix      Bug 修复
+    refactor 重构（不新增功能、不修复 Bug）
+    docs     文档变更
+    style    格式调整（不影响逻辑）
+    test     测试相关
+    chore    构建/工具/依赖等杂项
+
+  示例（正确）：
+    feat: 新增 /new-deploy skill，单独生成 deploy.sh
+    fix: 修正 nginx SSL 证书路径，改为 /etc/nginx/ssl/
+    docs: 更新 README，补充 deploy.sh 能力说明
+
+  示例（禁止）：
+    update
+    fix bug
+    修改了一些东西
 
 示例
   /common-rules         激活规范，对后续所有任务生效
@@ -107,3 +133,36 @@ description: 通用行为规范，适用于所有任务：每次任务完成后�
 - 运行时配置：通过环境变量引用，如 `${DB_PASSWORD}`、`${JWT_SECRET}`
 - 模板 / 示例文件：使用语义明确的占位符，如 `changeme`、`<YOUR_API_KEY>`
 - 若发现现有代码已有硬编码敏感信息：立即告知用户，不在此基础上继续扩展，建议用环境变量替换
+
+---
+
+## 四、git commit message 结构化格式
+
+每次执行 git 提交前，**必须**按以下格式组织 commit message：
+
+```
+<类型>: <简短描述>（不超过 72 字符）
+
+[可选正文：说明做了什么、为什么这样做，每行不超过 72 字符]
+```
+
+**类型取值**：
+
+| 类型 | 适用场景 |
+|---|---|
+| `feat` | 新功能 |
+| `fix` | Bug 修复 |
+| `refactor` | 重构（不新增功能、不修复 Bug） |
+| `docs` | 文档变更 |
+| `style` | 格式调整（不影响逻辑） |
+| `test` | 测试相关 |
+| `chore` | 构建 / 工具 / 依赖等杂项 |
+
+**正确示例**：
+```
+feat: 新增 /new-deploy skill，单独生成 deploy.sh
+fix: 修正 nginx SSL 证书路径，改为 /etc/nginx/ssl/
+docs: 更新 README，补充 deploy.sh 能力说明
+```
+
+**禁止**使用无意义描述，如：`update`、`fix bug`、`修改了一些东西`。
