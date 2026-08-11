@@ -69,6 +69,53 @@ deploy.sh 主要能力
 
 ## 一、收集参数
 
+### 1.0 检测现有脚本（Update 流程）
+
+**在执行任何参数收集之前，先检查目标工程根目录是否已存在 `scripts/deploy.sh`。**
+
+#### 存在时：自动提取参数，进入 Update 流程
+
+从现有文件中提取以下参数（精确 grep，无歧义）：
+
+| 参数 | 提取方式 |
+|---|---|
+| `SERVICE_NAME` | `grep '^BACKEND_DIR=' scripts/deploy.sh` → 取路径最后一段 |
+| `APP_PORT` | `grep '^APP_PORT=' scripts/deploy.sh` → 取 `=` 右侧数值 |
+| `NGINX_PORT` | `grep '^NGINX_PORT=' scripts/deploy.sh` → 取 `=` 右侧数值 |
+| `TEST_DOMAIN` | `grep 'test) echo' scripts/deploy.sh` → 取引号内域名 |
+| `PROD_DOMAIN` | `grep 'prod) echo' scripts/deploy.sh` → 取引号内域名 |
+| `HAS_WEB` | `grep 'DEPLOY_WEB=false' scripts/deploy.sh` 出现在 `parse_deploy_args` 初始化处则为 `false`，否则为 `true` |
+| `HAS_ANDROID` | 检查 `usage()` 中是否含 `--target android` 说明 |
+
+提取后向用户**一次性展示所有参数**，格式：
+
+```
+检测到现有 scripts/deploy.sh，已自动提取当前参数：
+
+  SERVICE_NAME : my-service
+  APP_PORT     : 50001
+  NGINX_PORT   : 50000
+  TEST_DOMAIN  : svc.test.example.com
+  PROD_DOMAIN  : svc.example.com
+  HAS_WEB      : false
+  HAS_ANDROID  : false
+
+直接回车使用以上参数更新，或输入需修改的参数（如 HAS_ANDROID=true）：
+```
+
+- 用户直接回车 → 使用提取到的参数，跳过 1.2、1.3 节
+- 用户输入修改项 → 更新对应参数，其余保持提取值
+
+然后：
+1. 用确认后的参数渲染模板，生成新版本到临时文件
+2. **展示差异**（`diff -u scripts/deploy.sh <新版本>`，重点标出新增/删除的 target、函数）
+3. 询问：`是否用新版本覆盖？（y/N）`
+4. 用户确认后覆盖，并执行 `chmod +x`
+
+#### 不存在时：正常进入 1.1 → 1.2 → 1.3 收集流程
+
+---
+
 ### 1.1 解析命令行参数
 
 | 命令行写法 | 对应参数 |
@@ -202,7 +249,7 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
 
 ## 六、注意事项
 
-- 生成的文件如果目标路径已存在，**先展示差异，询问用户是否覆盖**，不要直接覆盖。
+- 目标文件已存在时，走 **1.0 Update 流程**（自动提取参数 → 展示差异 → 确认覆盖），不要静默覆盖，也不要重新询问所有参数。
 - deploy.sh 要求在**项目根目录**执行（`bash scripts/deploy.sh`），脚本内部会校验 `pwd` 是否等于 `$PROJECT_DIR`。
 - supervisord 配置由 deploy.sh 在部署时 inline 生成到 `/etc/supervisor/conf.d/<SERVICE_NAME>.conf`，无需在版本库中维护静态 ini 文件。
 - Spring 环境（dev/test/prod）通过 env 文件中的 `SPRING_PROFILES_ACTIVE` 传递，deploy.sh 不硬编码 `--spring.profiles.active`。
