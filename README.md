@@ -12,6 +12,7 @@
 | [`/new‑deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
 | [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/`，不含任何具体项目的定制内容 |
 | [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
+| [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
 
 逐个 skill 的详细用法见下方对应章节。
 
@@ -63,7 +64,8 @@ software-engineering-skills/
         ├── new-java-project.md   Claude Code skill 定义（为 Java/Spring Boot 工程生成完整部署配置）
         ├── new-deploy.md         Claude Code skill 定义（单独生成/更新 deploy.sh 和 apply-ssl.sh）
         ├── new-nginx-conf.md     Claude Code skill 定义（生成标准通用的 nginx 主配置目录）
-        └── common-rules.md       Claude Code skill 定义（通用行为规范：任务摘要、v0 文档保护、禁止硬编码）
+        ├── common-rules.md       Claude Code skill 定义（通用行为规范：任务摘要、v0 文档保护、禁止硬编码）
+        └── aibug.md              Claude Code skill 定义（连接 aibug 系统，自动循环修复 Bug）
 ```
 
 ---
@@ -214,6 +216,42 @@ software-engineering-skills/
 ```bash
 /common-rules    # 激活通用规范，对后续所有任务生效
 ```
+
+---
+
+### `/aibug`
+
+自动连接 aibug Bug 管理系统，循环获取并修复 PENDING 状态的 Bug，直到队列为空。必须配合 aibug 系统使用。
+
+**用法**
+
+```bash
+/aibug --host=http://your-server:8082 \
+  --username=admin --password=secret \
+  --project-id=1                         # 全参数指定，直接开始
+/aibug                                   # 交互式，逐一询问参数
+/aibug -h                                # 查看帮助
+```
+
+**所有参数均为必填，无默认值：**
+
+| 参数 | 说明 |
+|---|---|
+| `--host` | aibug 系统 Base URL |
+| `--username` | 登录账号 |
+| `--password` | 登录密码 |
+| `--project-id` | 项目 ID |
+
+**工作流程**
+
+1. `POST {host}/aibug/api/auth/login` — 登录获取 token
+2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug
+3. 标记为 `IN_PROGRESS`，防止重复领取
+4. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码
+5. 修复成功 → `FIXED`；无法修复 → `FAILED`（附失败原因）
+6. 循环回到第 2 步，直到队列清空
+
+完成后输出汇总：处理总数、FIXED 数量、FAILED 数量及原因。
 
 ---
 
