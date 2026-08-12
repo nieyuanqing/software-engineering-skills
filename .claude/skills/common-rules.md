@@ -1,6 +1,6 @@
 ---
 name: common-rules
-description: 通用行为规范，适用于所有任务：每次任务完成后输出结果清单、影响范围和开始/结束时间；禁止修改 v0 原始产品设计文档（只读）；禁止在代码、配置、脚本中硬编码任何敏感信息；git commit message 必须使用结构化格式。
+description: 通用行为规范，适用于所有任务：每次任务完成后输出结果清单、影响范围和开始/结束时间；禁止修改 v0 原始产品设计文档（只读）；禁止在代码、配置、脚本中硬编码任何敏感信息；git commit message 必须使用结构化格式；CORS 必须在 nginx 配置中实现，禁止在 Java 后端处理。
 ---
 
 # common-rules
@@ -68,6 +68,11 @@ description: 通用行为规范，适用于所有任务：每次任务完成后�
     update
     fix bug
     修改了一些东西
+
+规范五：CORS 在 nginx 配置中实现
+  禁止在 Java 后端（Spring Boot / Filter / WebMvcConfigurer / @CrossOrigin 等）处理跨域。
+  CORS 响应头统一由 nginx 配置写入，后端不感知跨域逻辑。
+  若发现已有后端 CORS 代码，立即告知用户，建议迁移到 nginx，不在后端继续扩展。
 
 示例
   /common-rules         激活规范，对后续所有任务生效
@@ -166,3 +171,17 @@ docs: 更新 README，补充 deploy.sh 能力说明
 ```
 
 **禁止**使用无意义描述，如：`update`、`fix bug`、`修改了一些东西`。
+
+---
+
+## 五、CORS 在 nginx 配置中实现
+
+**禁止**在 Java 后端通过以下任何方式处理跨域：
+- `@CrossOrigin` 注解
+- `WebMvcConfigurer.addCorsMappings()`
+- `CorsFilter` / `CorsConfiguration` Bean
+- `HttpServletResponse.setHeader("Access-Control-Allow-Origin", ...)` 等手动写响应头
+
+**强制要求**：CORS 响应头统一在 nginx 配置中写入（参考 `deploy-conf/nginx/subconf/cross_domain.conf`），后端不感知跨域逻辑。
+
+**发现存量后端 CORS 代码时**：立即告知用户，说明应迁移到 nginx，不在后端继续扩展或修改该部分代码。
