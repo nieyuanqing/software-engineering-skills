@@ -47,7 +47,7 @@ description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf +
   nginx.conf                主配置（worker/事件/http 层通用参数 + include 链）
   mime.types                标准 MIME 类型表
   subconf/global.conf       扩展点（第三方模块指令占位，默认全部注释）
-  subconf/log.conf          通用访问日志格式（不含任何项目专属请求头字段）
+  subconf/log.conf          标准公参访问日志格式（request_id/XFF/请求细节/设备 id/userid 请求头，Token/Authorization 经 map 脱敏）
   subconf/ssl.conf          通用 SSL 参数（ciphers/协议/session 缓存，证书路径为占位符 <DOMAIN>）
   subconf/cross_domain.conf 通用 CORS 片段（不含项目专属请求头）
   subconf/geo.conf          IP 名单扩展点（默认空白名单）

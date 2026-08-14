@@ -188,7 +188,7 @@ software-engineering-skills/
 |---|---|
 | `deploy-conf/nginx/nginx.conf` | 主配置（worker/事件/http 层通用参数 + include 链） |
 | `deploy-conf/nginx/mime.types` | 标准 MIME 类型表 |
-| `deploy-conf/nginx/subconf/log.conf` | 通用访问日志格式，不含任何项目专属请求头字段 |
+| `deploy-conf/nginx/subconf/log.conf` | 标准公参访问日志格式（request_id/XFF/请求细节/设备 id/userid 请求头，Token/Authorization 经 map 脱敏） |
 | `deploy-conf/nginx/subconf/ssl.conf` | 通用 SSL 参数（ciphers/协议/session 缓存），证书路径为占位符 `<DOMAIN>` |
 | `deploy-conf/nginx/subconf/cross_domain.conf` | 通用 CORS 片段，不含项目专属请求头 |
 | `deploy-conf/nginx/subconf/{global,geo,error_pages}.conf` | 扩展点 / IP 名单 / 统一错误页映射 |
