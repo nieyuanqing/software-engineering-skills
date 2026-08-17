@@ -1,15 +1,13 @@
 ---
 name: new-nginx-conf
-description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf + subconf/ + upstream/ + cert/ + html 错误页），合并进 deploy-conf/nginx/ 目录，与 /new-java-project 生成的 vhosts/ 服务配置共存，去除任何与具体项目相关的定制内容（域名、证书、专属请求头、专属 API 门户页等）。当用户要求"生成 nginx 配置"、"初始化 nginx 主配置"、"新建 nginx-conf"时触发。支持 /new-nginx-conf -h 查看帮助。
+description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf + subconf/ + upstream/ + cert/ + html 错误页），合并进 deploy-conf/nginx/ 目录，与 /new-java-project 生成的 vhosts/ 服务配置共存。当用户要求"生成 nginx 配置"、"初始化 nginx 主配置"、"新建 nginx-conf"时触发。支持 /new-nginx-conf -h 查看帮助。
 ---
 
 # new-nginx-conf
 
 在**当前目录**下的 `deploy-conf/nginx/` 生成一份标准、通用、可直接作为共享主机 nginx 安装基座的
-主机级基础配置。内容来自 `software-engineering-skills` 仓库的 `templates/deploy-conf/nginx/`——
-这份模板本身是从一台已在生产环境跑过的主机的 `/opt/soft/nginx/conf` 提炼而来，**已经剔除了该主机
-上所有具体项目的定制内容**（项目域名、证书私钥、专属业务请求头、专属 API 门户页面等），只保留跨
-项目通用、可复用的部分。
+主机级基础配置。内容来自 `software-engineering-skills` 仓库的 `templates/deploy-conf/nginx/`，
+提炼自一台生产主机的 `/opt/soft/nginx/conf`。
 
 **触发条件**：用户要求生成 nginx 配置、初始化 nginx 主配置、新建 `nginx-conf`。
 
@@ -39,7 +37,7 @@ description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf +
 
 功能
   在当前目录的 deploy-conf/nginx/ 下生成标准、通用的 nginx 主机级基础配置，内容取自
-  software-engineering-skills/templates/deploy-conf/nginx/，不含任何具体项目的定制信息。
+  software-engineering-skills/templates/deploy-conf/nginx/。
   与 /new-java-project 生成的 deploy-conf/nginx/vhosts/<service>.*.conf 共存于同一目录树，
   两个 skill 分别只处理各自负责的文件。
 
@@ -49,14 +47,14 @@ description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf +
   subconf/global.conf       扩展点（第三方模块指令占位，默认全部注释）
   subconf/log.conf          标准公参访问日志格式（request_id/XFF/请求细节/设备 id/userid 请求头，Token/Authorization 经 map 脱敏）
   subconf/ssl.conf          通用 SSL 参数（ciphers/协议/session 缓存，证书路径为占位符 <DOMAIN>）
-  subconf/cross_domain.conf 通用 CORS 片段（不含项目专属请求头）
+  subconf/cross_domain.conf 通用 CORS 片段
   subconf/geo.conf          IP 名单扩展点（默认空白名单）
   subconf/error_pages.conf  统一错误页映射（404/405/500/502/503/504）
   upstream/upstream.conf    upstream 扩展点（默认空，按需声明负载均衡组）
   vhosts/README.md          说明各服务 vhost 配置放在这里（内容由 /new-java-project 生成，
                              本 skill 不生成、不覆盖 vhosts/<service>.*.conf）
   cert/README.md            说明 SSL 证书应放在这里（不纳入版本管理）
-  html/{404,405,500,502,503,504}.html  通用错误页（无项目品牌信息）
+  html/{404,405,500,502,503,504}.html  通用错误页
 
 示例
   /new-nginx-conf       在当前目录生成 deploy-conf/nginx/
@@ -65,8 +63,7 @@ description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf +
 注意
   - 如当前目录已存在 deploy-conf/nginx/，会展示将被覆盖的文件列表并询问是否继续，不会静默覆盖，
     且绝不触碰 vhosts/ 下 /new-java-project 生成的 <service>.*.conf 服务配置
-  - 生成的内容不含任何真实域名、证书私钥、业务专属请求头，需要按目标主机实际情况在
-    vhosts/、cert/ 下补充具体项目配置
+  - 域名、证书、业务专属请求头等需按目标主机实际情况在 vhosts/、cert/ 下补充具体项目配置
   - 本 skill 只生成配置文件，不会自动安装 nginx、不会执行 nginx -t / nginx -s reload
 ```
 
@@ -94,8 +91,7 @@ description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf +
 将 `software-engineering-skills/templates/deploy-conf/nginx/` 目录树复制到当前目录下的
 `deploy-conf/nginx/`，**跳过 `vhosts/service.dev.conf`、`vhosts/service.test.conf`、
 `vhosts/service.prod.conf` 这三个文件**（它们是 `/new-java-project` 的原始模板，只在执行该 skill
-时按服务名渲染复制，本 skill 不会把这三个模板原样复制进目标工程）。不做占位符替换（本 skill 负责
-的部分不含项目专属占位符，是可以直接使用的通用配置）：
+时按服务名渲染复制，本 skill 不会把这三个模板原样复制进目标工程）。不做占位符替换：
 
 ```
 deploy-conf/nginx/

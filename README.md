@@ -10,7 +10,7 @@
 |:------------------------------------------------------|---|
 | [`/new‑java‑project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、env、Spring Boot yml、specs 文档） |
 | [`/new‑deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
-| [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/`，不含任何具体项目的定制内容 |
+| [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/` |
 | [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本 |
 | [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本 |
 | [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
@@ -49,7 +49,7 @@ software-engineering-skills/
 │   │   │   ├── subconf/            global/log/ssl/cross_domain/geo/error_pages 六个通用片段（/new-nginx-conf 所属）
 │   │   │   ├── upstream/upstream.conf  upstream 扩展点，默认空（/new-nginx-conf 所属）
 │   │   │   ├── cert/README.md      说明 SSL 证书应放在这里，不纳入版本管理（/new-nginx-conf 所属）
-│   │   │   ├── html/               通用错误页 404/405/500/502/503/504，无项目品牌信息（/new-nginx-conf 所属）
+│   │   │   ├── html/               通用错误页 404/405/500/502/503/504（/new-nginx-conf 所属）
 │   │   │   └── vhosts/             各服务 vhost 配置目录
 │   │   │       ├── README.md         说明本目录用途（/new-nginx-conf 所属，只落地一次）
 │   │   │       ├── service.dev.conf  nginx vhost 模板（/new-java-project 所属，dev 环境，HTTP/IP+端口）
@@ -175,9 +175,7 @@ software-engineering-skills/
 ### `/new-nginx-conf`
 
 在当前目录生成标准、通用的 nginx 主机级基础配置到 `deploy-conf/nginx/`，内容取自本仓库的
-`templates/deploy-conf/nginx/`——该模板从一台已在生产环境跑过的主机的 `/opt/soft/nginx/conf`
-提炼而来，已剔除该主机上所有具体项目的定制内容（项目域名、证书私钥、专属业务请求头、专属 API
-门户页面等）。
+`templates/deploy-conf/nginx/`，提炼自一台生产主机的 `/opt/soft/nginx/conf`。
 
 `deploy-conf/nginx/` 这棵目录树由 `/new-nginx-conf` 与 `/new-java-project` 共同拥有，但各自只处理
 自己负责的文件：`/new-nginx-conf` 生成主机级的 nginx 本身（`nginx.conf`、`subconf/`、`upstream/`、
@@ -200,12 +198,12 @@ software-engineering-skills/
 | `deploy-conf/nginx/mime.types` | 标准 MIME 类型表 |
 | `deploy-conf/nginx/subconf/log.conf` | 标准公参访问日志格式（request_id/XFF/请求细节/设备 id/userid 请求头，Token/Authorization 经 map 脱敏） |
 | `deploy-conf/nginx/subconf/ssl.conf` | 通用 SSL 参数（ciphers/协议/session 缓存），证书路径为占位符 `<DOMAIN>` |
-| `deploy-conf/nginx/subconf/cross_domain.conf` | 通用 CORS 片段，不含项目专属请求头 |
+| `deploy-conf/nginx/subconf/cross_domain.conf` | 通用 CORS 片段 |
 | `deploy-conf/nginx/subconf/{global,geo,error_pages}.conf` | 扩展点 / IP 名单 / 统一错误页映射 |
 | `deploy-conf/nginx/upstream/upstream.conf` | upstream 扩展点（默认空，按需声明负载均衡组） |
 | `deploy-conf/nginx/vhosts/README.md` | 说明各服务 vhost 配置放在这里（`<name>.*.conf` 由 `/new-java-project` 生成） |
 | `deploy-conf/nginx/cert/README.md` | 说明 SSL 证书应放在这里（不纳入版本管理） |
-| `deploy-conf/nginx/html/{404,405,500,502,503,504}.html` | 通用错误页，无项目品牌信息 |
+| `deploy-conf/nginx/html/{404,405,500,502,503,504}.html` | 通用错误页 |
 
 **注意**：本 skill 只生成配置文件，不会自动安装 nginx、不会执行 `nginx -t` / `nginx -s reload`——
 是否覆盖主机上现有的 `/opt/soft/nginx/conf` 需要用户自行确认后操作（见
