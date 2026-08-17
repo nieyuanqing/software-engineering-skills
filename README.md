@@ -330,3 +330,9 @@ software-engineering-skills/
 ```
 安装 skill：https://github.com/nieyuanqing/software-engineering-skills.git
 ```
+
+本机已配置 GitHub SSH key 时（HTTPS 拉取受限或较慢的网络环境推荐），改用 SSH 地址：
+
+```
+安装 skill：git@github.com:nieyuanqing/software-engineering-skills.git
+```
