@@ -11,6 +11,8 @@
 | [`/new‑java‑project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、env、Spring Boot yml、specs 文档） |
 | [`/new‑deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
 | [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/`，不含任何具体项目的定制内容 |
+| [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本，不含任何项目专属信息 |
+| [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本，不含任何项目专属信息 |
 | [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
 
@@ -33,7 +35,13 @@ software-engineering-skills/
 │   │   ├── deploy.sh             部署脚本模板（backend/web/ssl 三个 target；本地/远程部署；
 │   │   │                         inline supervisord 配置；nginx 自动同步；Phase N/M 日志；
 │   │   │                         [STATUS] 机器可读输出；420s 健康检查；部署摘要）
-│   │   └── apply-ssl.sh          SSL 证书申请脚本模板（Let's Encrypt + acme.sh）
+│   │   ├── apply-ssl.sh          SSL 证书申请脚本模板（Let's Encrypt + acme.sh）
+│   │   ├── android-build.sh      Android 编译校验脚本模板（默认 compileDebugKotlin，
+│   │   │                         不签名不出 APK；SDK 定位 local.properties → ANDROID_HOME；
+│   │   │                         gradlew 优先回退系统 gradle；release task 校验签名环境变量）
+│   │   └── macos-build.sh        iOS 构建校验与打包脚本模板（模拟器编译校验 + .app zip 归档
+│   │                             mobile-apps/；--run 模拟器启动；--ipa 打真机 .ipa；
+│   │                             产物名/Bundle ID/版本从 build settings 动态读取）
 │   ├── deploy-conf/
 │   │   ├── nginx/                 nginx 配置目录（/new-nginx-conf 与 /new-java-project 共用）
 │   │   │   ├── nginx.conf          主配置（/new-nginx-conf 所属，worker/事件/http 层通用参数 + include 链）
@@ -64,6 +72,8 @@ software-engineering-skills/
         ├── new-java-project.md   Claude Code skill 定义（为 Java/Spring Boot 工程生成完整部署配置）
         ├── new-deploy.md         Claude Code skill 定义（单独生成/更新 deploy.sh 和 apply-ssl.sh）
         ├── new-nginx-conf.md     Claude Code skill 定义（生成标准通用的 nginx 主配置目录）
+        ├── new-android-build.md  Claude Code skill 定义（生成 Android 编译校验脚本 android-build.sh）
+        ├── new-macos-build.md    Claude Code skill 定义（生成 iOS 构建校验与打包脚本 macos-build.sh）
         ├── common-rules.md       Claude Code skill 定义（通用行为规范：任务摘要、v0 文档保护、禁止硬编码）
         └── aibug.md              Claude Code skill 定义（连接 aibug 系统，自动循环修复 Bug）
 ```
@@ -200,6 +210,65 @@ software-engineering-skills/
 **注意**：本 skill 只生成配置文件，不会自动安装 nginx、不会执行 `nginx -t` / `nginx -s reload`——
 是否覆盖主机上现有的 `/opt/soft/nginx/conf` 需要用户自行确认后操作（见
 `specs/deployment-common.md` 第三节共享基础设施操作规范）。
+
+---
+
+### `/new-android-build`
+
+为含 Android 工程的仓库生成 `scripts/android-build.sh`——Android 编译校验脚本。脚本内容取自
+`templates/scripts/android-build.sh`，完全通用，不含任何项目专属信息（工程路径按标准约定
+`src/android/` 推导，SDK 与签名凭据走环境变量），直接原样复制、无需传参。
+
+**定位**：只管"本机改完代码后编译能不能过"，不签名、不产出可安装 APK；正式打包/签名/产物分发
+由工程自己的发布流程负责。
+
+**用法**
+
+```bash
+/new-android-build       # 在当前工程生成 scripts/android-build.sh
+/new-android-build -h    # 查看帮助
+```
+
+**android-build.sh 主要能力**
+
+| 能力 | 说明 |
+|---|---|
+| 默认 task | `compileDebugKotlin`（只编译校验），`-t/--task` 可指定其他 task（如 `assembleDebug`） |
+| SDK 定位 | 优先 `src/android/local.properties` 的 `sdk.dir`（本机配置，不提交版本库），其次 `ANDROID_HOME` |
+| gradle | 优先 `src/android/gradlew`，回退系统 `gradle` |
+| 签名校验 | task 含 release 时提前校验 `ANDROID_KEYSTORE_PATH` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` |
+| 日志与状态 | 构建日志落盘 `runtime/build-android-<时间戳>.log`，失败摘最后 120 行；`[STATUS] SUCCESS/ERROR` 机器可读输出 |
+
+---
+
+### `/new-macos-build`
+
+为含 iOS 工程的仓库生成 `scripts/macos-build.sh`——iOS 构建校验与打包脚本（仅在 macOS + Xcode
+环境运行）。脚本内容取自 `templates/scripts/macos-build.sh`，完全通用，不含任何项目专属信息：
+工程自动查找或 `-p` 指定，产物名 / Bundle ID / 版本号全部从 `xcodebuild -showBuildSettings`
+动态读取，签名凭据走环境变量，直接原样复制、无需传参。
+
+**用法**
+
+```bash
+/new-macos-build       # 在当前工程生成 scripts/macos-build.sh
+/new-macos-build -h    # 查看帮助
+```
+
+**macos-build.sh 主要能力**
+
+| 能力 | 说明 |
+|---|---|
+| 编译校验 | `xcodebuild build`，`destination=generic/platform=iOS Simulator`，`CODE_SIGNING_ALLOWED=NO`（不签名） |
+| 工程定位 | `-p/--project` 显式指定；否则当前目录自动查找（优先 `.xcworkspace`，其次 `.xcodeproj`，多个则报错） |
+| scheme / 配置 | `-s/--scheme` 指定或读工程第一个 scheme；`-c/--configuration` 默认 Debug，分发包建议 Release |
+| 产物归档 | 模拟器 `.app` zip 归档到 `mobile-apps/<产品名>-ios-<配置>-<版本>.zip`（与 Android APK 同目录） |
+| `--run` | 安装到可用 iPhone 模拟器并启动（Bundle ID 动态读取，界面验证用） |
+| `--ipa` | `archive` + `exportArchive` 打真机 `.ipa`；Team ID 必须显式提供（`-t/--team` 或 `IOS_TEAM_ID`），导出方式走 `IOS_EXPORT_METHOD`；签名账号未就绪时提示并跳过，不视为构建失败 |
+| 日志与状态 | 构建日志落盘 `runtime/build-ios-<时间戳>.log`，失败摘 error 行（最多 40 条）；`[STATUS] SUCCESS/ERROR/SKIPPED` 机器可读输出 |
+
+**注意**：生成的脚本只能在 macOS 上运行（脚本内部有 `uname -s` 校验），在 Linux 开发机上生成后
+需到 Mac 上执行；`--ipa` 前需在 Xcode → Settings → Accounts 登录对应 Apple 开发者账号。
 
 ---
 
