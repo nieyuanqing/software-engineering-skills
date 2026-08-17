@@ -24,7 +24,7 @@ description: 为含 Android 工程的仓库生成 scripts/android-build.sh 编�
 
 功能
   在目标工程根目录生成 scripts/android-build.sh（Android 编译校验脚本）。
-  脚本内容完全通用，不含任何项目专属信息，无需传参。
+  无需传参。
 
 生成文件
   scripts/android-build.sh   Android 编译校验脚本
@@ -100,7 +100,7 @@ scripts/android-build.sh
 
 ### 占位符替换
 
-**无**。模板完全通用（工程路径按标准约定 `src/android/` 推导，SDK/签名凭据走环境变量），直接原样复制，不做任何内容修改。
+**无**。直接原样复制（工程路径按标准约定 `src/android/` 推导，SDK/签名凭据走环境变量），不做任何内容修改。
 
 ---
 

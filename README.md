@@ -11,8 +11,8 @@
 | [`/new‑java‑project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、env、Spring Boot yml、specs 文档） |
 | [`/new‑deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
 | [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/`，不含任何具体项目的定制内容 |
-| [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本，不含任何项目专属信息 |
-| [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本，不含任何项目专属信息 |
+| [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本 |
+| [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本 |
 | [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
 
@@ -216,8 +216,8 @@ software-engineering-skills/
 ### `/new-android-build`
 
 为含 Android 工程的仓库生成 `scripts/android-build.sh`——Android 编译校验脚本。脚本内容取自
-`templates/scripts/android-build.sh`，完全通用，不含任何项目专属信息（工程路径按标准约定
-`src/android/` 推导，SDK 与签名凭据走环境变量），直接原样复制、无需传参。
+`templates/scripts/android-build.sh`（工程路径按标准约定 `src/android/` 推导，SDK 与签名凭据
+走环境变量），直接原样复制、无需传参。
 
 **定位**：只管"本机改完代码后编译能不能过"，不签名、不产出可安装 APK；正式打包/签名/产物分发
 由工程自己的发布流程负责。
@@ -244,9 +244,9 @@ software-engineering-skills/
 ### `/new-macos-build`
 
 为含 iOS 工程的仓库生成 `scripts/macos-build.sh`——iOS 构建校验与打包脚本（仅在 macOS + Xcode
-环境运行）。脚本内容取自 `templates/scripts/macos-build.sh`，完全通用，不含任何项目专属信息：
-工程自动查找或 `-p` 指定，产物名 / Bundle ID / 版本号全部从 `xcodebuild -showBuildSettings`
-动态读取，签名凭据走环境变量，直接原样复制、无需传参。
+环境运行）。脚本内容取自 `templates/scripts/macos-build.sh`：工程自动查找或 `-p` 指定，
+产物名 / Bundle ID / 版本号全部从 `xcodebuild -showBuildSettings` 动态读取，签名凭据走
+环境变量，直接原样复制、无需传参。
 
 **用法**
 

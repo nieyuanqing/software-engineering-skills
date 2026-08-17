@@ -1,13 +1,13 @@
 ---
 name: new-macos-build
-description: 为含 iOS 工程的仓库生成 scripts/macos-build.sh 构建校验与打包脚本（仅 macOS + Xcode）。默认模拟器编译校验（xcodebuild build，不签名），成功后 .app zip 归档到 mobile-apps/；--run 装到 iPhone 模拟器启动；--ipa 走 archive + exportArchive 打真机 .ipa（Team ID/导出方式走环境变量）；工程名/Bundle ID/版本从 build settings 动态读取，不含任何项目专属信息；[STATUS] 机器可读输出。当用户要求"生成 iOS 构建脚本"、"macos 编译校验脚本"、"初始化 macos-build"时触发。支持 /new-macos-build -h 查看帮助。
+description: 为含 iOS 工程的仓库生成 scripts/macos-build.sh 构建校验与打包脚本（仅 macOS + Xcode）。默认模拟器编译校验（xcodebuild build，不签名），成功后 .app zip 归档到 mobile-apps/；--run 装到 iPhone 模拟器启动；--ipa 走 archive + exportArchive 打真机 .ipa（Team ID/导出方式走环境变量）；工程名/Bundle ID/版本从 build settings 动态读取；[STATUS] 机器可读输出。当用户要求"生成 iOS 构建脚本"、"macos 编译校验脚本"、"初始化 macos-build"时触发。支持 /new-macos-build -h 查看帮助。
 ---
 
 # new-macos-build
 
 为工程生成标准化的 `scripts/macos-build.sh`——iOS 构建校验与打包脚本（仅在 macOS + Xcode 环境运行）。
 
-**定位**：默认只做模拟器编译校验并把 .app zip 归档到 `mobile-apps/`（与 Android APK 同一分发目录）；`--run` 装到模拟器启动做界面验证；`--ipa` 额外打真机 .ipa。产物名、Bundle ID、版本号全部从 `xcodebuild -showBuildSettings` 动态读取，脚本不含任何项目专属信息。
+**定位**：默认只做模拟器编译校验并把 .app zip 归档到 `mobile-apps/`（与 Android APK 同一分发目录）；`--run` 装到模拟器启动做界面验证；`--ipa` 额外打真机 .ipa。产物名、Bundle ID、版本号全部从 `xcodebuild -showBuildSettings` 动态读取。
 
 **触发条件**：用户要求为某工程创建或更新 iOS 构建校验脚本（macos-build.sh）。
 
@@ -24,7 +24,7 @@ description: 为含 iOS 工程的仓库生成 scripts/macos-build.sh 构建校�
 
 功能
   在目标工程根目录生成 scripts/macos-build.sh（iOS 构建校验与打包脚本）。
-  脚本内容完全通用（工程定位、产物名、Bundle ID 均动态推导），无需传参。
+  无需传参（工程定位、产物名、Bundle ID 均动态推导）。
   生成的脚本只能在 macOS + Xcode 环境运行。
 
 生成文件
@@ -102,7 +102,7 @@ scripts/macos-build.sh
 
 ### 占位符替换
 
-**无**。模板完全通用（工程路径自动查找或 `-p` 指定，产物名/Bundle ID/版本从 build settings 动态读取，签名凭据走环境变量），直接原样复制，不做任何内容修改。
+**无**。直接原样复制（工程路径自动查找或 `-p` 指定，产物名/Bundle ID/版本从 build settings 动态读取，签名凭据走环境变量），不做任何内容修改。
 
 ---
 
