@@ -15,6 +15,7 @@
 | [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本 |
 | [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
+| [`/web‑api‑test`](#web-api-test) | 针对 src/web 前端逐页检查调用的后端 API 是否返回 200，非 200 定位前后端原因并修复 |
 
 逐个 skill 的详细用法见下方对应章节。
 
@@ -75,7 +76,8 @@ software-engineering-skills/
         ├── new-android-build.md  Claude Code skill 定义（生成 Android 编译校验脚本 android-build.sh）
         ├── new-macos-build.md    Claude Code skill 定义（生成 iOS 构建校验与打包脚本 macos-build.sh）
         ├── common-rules.md       Claude Code skill 定义（通用行为规范：任务摘要、v0 文档保护、禁止硬编码）
-        └── aibug.md              Claude Code skill 定义（连接 aibug 系统，自动循环修复 Bug）
+        ├── aibug.md              Claude Code skill 定义（连接 aibug 系统，自动循环修复 Bug）
+        └── web-api-test.md       Claude Code skill 定义（src/web 前端逐页检查后端 API 是否 200，非 200 前后端定位修复）
 ```
 
 ---
@@ -320,6 +322,40 @@ software-engineering-skills/
 6. 循环回到第 2 步，直到队列清空
 
 完成后输出汇总：处理总数、FIXED 数量、FAILED 数量及原因。
+
+---
+
+### `/web-api-test`
+
+针对集成了后端服务 API 的 src/web 前端（含 v0 生成代码），逐页检查其调用的后端 API 是否返回
+HTTP 200，非 200 的请求定位前后端原因并修复，修复后复验至通过。
+
+**用法**
+
+```bash
+/web-api-test                              # 自动探测后端地址，全量检查并修复
+/web-api-test --page=/order/list           # 只检查指定页面（可多次传入）
+/web-api-test --base-url=http://localhost:8080/api/mall --allow-write
+/web-api-test --no-fix                     # 只出报告，不改代码
+/web-api-test -h                           # 查看帮助
+```
+
+**可选参数**
+
+| 参数 | 说明 |
+|---|---|
+| `--base-url` | 后端 API 基础地址；不传则自动探测（前端 env / proxy 配置 / nginx vhost / specs） |
+| `--page` | 只测指定页面路由，可多次传入；不传则测全部页面 |
+| `--allow-write` | 允许直接探测 POST/PUT/DELETE 写操作 API（默认逐个询问） |
+| `--no-fix` | 只检查并输出报告，不修改代码 |
+
+**工作流程**
+
+1. 前置检查：`src/web/` 存在、识别路由结构（Next.js / Vue Router / React Router）、探测后端 base url、健康检查确认后端在线、确认鉴权 token 获取方式
+2. 逐页枚举：静态收集每个页面（含其引入的 service/hook 文件）调用的后端 API——方法 + 路径 + 参数来源
+3. 逐个探测：curl 实际请求，记录状态码与响应体；GET 直接探测，写操作默认需用户确认
+4. 诊断修复：非 200 按状态码（404/405/400/401/403/500）先查前端（路径/方法/参数/鉴权头），再查后端（mapping/参数绑定/安全白名单/异常日志），最小化修复后复验
+5. 汇总报告：页面 × API × 首次状态 × 最终状态 × 处置结果中文清单 + 修改文件清单
 
 ---
 
