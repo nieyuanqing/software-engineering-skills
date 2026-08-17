@@ -37,3 +37,4 @@ templates/deploy-conf/nginx/cert/*.pem
 templates/deploy-conf/nginx/cert/*.key
 deploy-conf/nginx/cert/*.pem
 deploy-conf/nginx/cert/*.key
+.qoder/
