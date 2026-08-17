@@ -257,7 +257,7 @@ software-engineering-skills/
 
 | 能力 | 说明 |
 |---|---|
-| 编译校验 | `xcodebuild build`，`destination=generic/platform=iOS Simulator`，`CODE_SIGNING_ALLOWED=NO`（不签名） |
+| 编译校验 | `xcodebuild build`，`destination=generic/platform=iOS Simulator`，`CODE_SIGN_IDENTITY="-"`（ad-hoc 签名，无需证书；iOS 17+ 模拟器对未签名 App 的 Keychain 访问会静默失败，ad-hoc 可规避） |
 | 工程定位 | `-p/--project` 显式指定；否则当前目录自动查找（优先 `.xcworkspace`，其次 `.xcodeproj`，多个则报错） |
 | scheme / 配置 | `-s/--scheme` 指定或读工程第一个 scheme；`-c/--configuration` 默认 Debug，分发包建议 Release |
 | 产物归档 | 模拟器 `.app` zip 归档到 `mobile-apps/<产品名>-ios-<配置>-<版本>.zip`（与 Android APK 同目录） |

@@ -1,6 +1,6 @@
 ---
 name: new-macos-build
-description: 为含 iOS 工程的仓库生成 scripts/macos-build.sh 构建校验与打包脚本（仅 macOS + Xcode）。默认模拟器编译校验（xcodebuild build，不签名），成功后 .app zip 归档到 mobile-apps/；--run 装到 iPhone 模拟器启动；--ipa 走 archive + exportArchive 打真机 .ipa（Team ID/导出方式走环境变量）；工程名/Bundle ID/版本从 build settings 动态读取；[STATUS] 机器可读输出。当用户要求"生成 iOS 构建脚本"、"macos 编译校验脚本"、"初始化 macos-build"时触发。支持 /new-macos-build -h 查看帮助。
+description: 为含 iOS 工程的仓库生成 scripts/macos-build.sh 构建校验与打包脚本（仅 macOS + Xcode）。默认模拟器编译校验（xcodebuild build，ad-hoc 签名，无需证书），成功后 .app zip 归档到 mobile-apps/；--run 装到 iPhone 模拟器启动；--ipa 走 archive + exportArchive 打真机 .ipa（Team ID/导出方式走环境变量）；工程名/Bundle ID/版本从 build settings 动态读取；[STATUS] 机器可读输出。当用户要求"生成 iOS 构建脚本"、"macos 编译校验脚本"、"初始化 macos-build"时触发。支持 /new-macos-build -h 查看帮助。
 ---
 
 # new-macos-build
@@ -32,7 +32,8 @@ description: 为含 iOS 工程的仓库生成 scripts/macos-build.sh 构建校�
 
 macos-build.sh 主要能力
   编译校验: xcodebuild build，destination=generic/platform=iOS Simulator，
-            CODE_SIGNING_ALLOWED=NO（不签名，只验证代码能否编译过）
+            CODE_SIGN_IDENTITY="-"（ad-hoc 签名，无需证书；iOS 17+ 模拟器
+            对未签名 App 的 Keychain 访问会静默失败，ad-hoc 签名可规避）
   工程定位: -p/--project 显式指定；不指定时在当前目录自动查找
             （优先 .xcworkspace，其次 .xcodeproj，多个则报错）
   scheme:   -s/--scheme 指定；不指定时读工程第一个 scheme

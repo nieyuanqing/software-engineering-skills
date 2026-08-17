@@ -1,9 +1,9 @@
 #!/bin/bash
 # iOS 构建校验与打包脚本——只在 macOS + Xcode 环境下运行。
-# 默认跑模拟器编译校验（xcodebuild build，不签名），成功后把模拟器 .app
-# 打包 zip 归档到 mobile-apps/（与 Android APK 同一分发目录）；--run 额外装到
-# 可用 iPhone 模拟器并启动，供界面验证；--ipa 额外走 archive + exportArchive
-# 打真机 .ipa（签名凭据 IOS_TEAM_ID/IOS_EXPORT_METHOD 走环境变量）。
+# 默认跑模拟器编译校验（xcodebuild build，ad-hoc 签名，无需证书），成功后把
+# 模拟器 .app 打包 zip 归档到 mobile-apps/（与 Android APK 同一分发目录）；
+# --run 额外装到可用 iPhone 模拟器并启动，供界面验证；--ipa 额外走 archive +
+# exportArchive 打真机 .ipa（签名凭据 IOS_TEAM_ID/IOS_EXPORT_METHOD 走环境变量）。
 # 工程定位：-p 显式指定，或在当前目录自动查找（优先 .xcworkspace，其次
 # .xcodeproj，找到多个则报错要求明确指定）。产物名/Bundle ID 全部从
 # xcodebuild -showBuildSettings 动态读取，不硬编码任何工程专属信息。
@@ -223,15 +223,18 @@ log "使用 scheme: ${IOS_SCHEME}，configuration: $CONFIGURATION"
 BUILD_LOG_FILE="$RUNTIME_DIR/build-ios-$(date '+%Y%m%d%H%M%S').log"
 log "xcodebuild 构建日志: $BUILD_LOG_FILE"
 
-# 只编译不签名、不打包：destination 用 generic/platform=iOS Simulator（不需要实际启动
-# 模拟器实例），CODE_SIGNING_ALLOWED=NO 避免因为本机没有匹配的签名证书/描述文件导致
-# 构建失败——这一步只关心"代码能不能编译过"，不关心能不能装到设备/模拟器上跑。
+# 模拟器编译校验用 ad-hoc 签名（CODE_SIGN_IDENTITY="-"，不需要任何证书）：iOS 17+
+# 模拟器对未签名 App 的 Keychain 访问会静默失败（SecItemAdd 报错），登录 token
+# 存不进去，登录后第一个请求不带 Authorization 被 401 踢回登录页——ad-hoc 签名
+# 不需要证书，又让 App 带合法标识，Keychain 恢复正常。destination 用
+# generic/platform=iOS Simulator，不需要实际启动模拟器实例。
 if xcodebuild build \
     "${XCODEBUILD_PROJECT_FLAG[@]}" \
     -scheme "$IOS_SCHEME" \
     -configuration "$CONFIGURATION" \
     -destination "generic/platform=iOS Simulator" \
-    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_ALLOWED=YES \
+    CODE_SIGN_IDENTITY="-" \
     </dev/null >"$BUILD_LOG_FILE" 2>&1; then
     log "编译通过"
 else
@@ -275,6 +278,8 @@ if [ "$RUN_IN_SIMULATOR" = true ]; then
     [ -n "$BUNDLE_ID" ] || fail "未能从 build settings 读取 PRODUCT_BUNDLE_IDENTIFIER，无法在模拟器启动 App"
     log "启动模拟器并安装: ${SIM_UDID}"
     xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
+    # simctl boot 只启动后台设备，不会弹窗——主动打开 Simulator 才能看到运行画面
+    open -a Simulator || fail "打开 Simulator 应用失败"
     xcrun simctl install "$SIM_UDID" "$APP_PATH" || fail "安装到模拟器失败: ${SIM_UDID}"
     xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" || fail "模拟器启动 App 失败（${BUNDLE_ID}）"
     log "App 已在模拟器启动（${BUNDLE_ID}）"
