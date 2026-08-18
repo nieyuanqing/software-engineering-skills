@@ -166,10 +166,12 @@ scripts/apply-ssl.sh
 
 ### 模板来源
 
+以下路径均相对于**本 skill 目录**（安装后通常为 `~/.qoder/skills/new-deploy/`），模板随 skill 一起分发，不依赖任何仓库克隆或本地工程。
+
 | 目标文件 | 模板来源 |
 |---|---|
-| `scripts/deploy.sh` | `software-engineering-skills/templates/scripts/deploy.sh` |
-| `scripts/apply-ssl.sh` | `software-engineering-skills/templates/scripts/apply-ssl.sh` |
+| `scripts/deploy.sh` | `templates/scripts/deploy.sh` |
+| `scripts/apply-ssl.sh` | `templates/scripts/apply-ssl.sh` |
 
 ### 占位符替换表
 

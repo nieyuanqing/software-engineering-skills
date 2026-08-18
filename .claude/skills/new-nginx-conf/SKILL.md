@@ -6,8 +6,8 @@ description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf +
 # new-nginx-conf
 
 在**当前目录**下的 `deploy-conf/nginx/` 生成一份标准、通用、可直接作为共享主机 nginx 安装基座的
-主机级基础配置。内容来自 `software-engineering-skills` 仓库的 `templates/deploy-conf/nginx/`，
-提炼自一台生产主机的 `/opt/soft/nginx/conf`。
+主机级基础配置。内容来自本 skill 目录下的 `templates/deploy-conf/nginx/`（随 skill 一起分发，
+不依赖任何仓库克隆或本地工程），提炼自一台生产主机的 `/opt/soft/nginx/conf`。
 
 **触发条件**：用户要求生成 nginx 配置、初始化 nginx 主配置、新建 `nginx-conf`。
 
@@ -37,7 +37,7 @@ description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf +
 
 功能
   在当前目录的 deploy-conf/nginx/ 下生成标准、通用的 nginx 主机级基础配置，内容取自
-  software-engineering-skills/templates/deploy-conf/nginx/。
+  本 skill 目录下的 templates/deploy-conf/nginx/。
   与 /new-java-project 生成的 deploy-conf/nginx/vhosts/<service>.*.conf 共存于同一目录树，
   两个 skill 分别只处理各自负责的文件。
 
@@ -88,10 +88,10 @@ description: 生成标准、通用的 nginx 主机级基础配置（nginx.conf +
 
 ## 三、生成文件清单
 
-将 `software-engineering-skills/templates/deploy-conf/nginx/` 目录树复制到当前目录下的
-`deploy-conf/nginx/`，**跳过 `vhosts/service.dev.conf`、`vhosts/service.test.conf`、
-`vhosts/service.prod.conf` 这三个文件**（它们是 `/new-java-project` 的原始模板，只在执行该 skill
-时按服务名渲染复制，本 skill 不会把这三个模板原样复制进目标工程）。不做占位符替换：
+将**本 skill 目录**下的 `templates/deploy-conf/nginx/` 目录树整树复制到当前目录下的
+`deploy-conf/nginx/`。本副本**不含** `vhosts/service.dev.conf`、`vhosts/service.test.conf`、
+`vhosts/service.prod.conf`——这三个 vhost 模板属于 `/new-java-project`，只在执行该 skill 时
+按服务名渲染复制，不随本 skill 分发。不做占位符替换：
 
 ```
 deploy-conf/nginx/
@@ -122,13 +122,13 @@ deploy-conf/nginx/
 ## 四、生成后处理
 
 1. 提示用户：`vhosts/` 目录当前只有说明文档，需要为具体服务执行 `/new-java-project` 生成
-   vhost 配置；`cert/` 目录只有说明文档，需要补充 SSL 证书（可用
-   `templates/scripts/apply-ssl.sh` 申请）。
+   vhost 配置；`cert/` 目录只有说明文档，需要补充 SSL 证书（可用 `/new-deploy` 或
+   `/new-java-project` 生成的 `scripts/apply-ssl.sh` 申请）。
 2. 提示用户：如果这台主机计划把 `deploy-conf/nginx/` 安装为实际生效的 nginx 配置目录，需要自行
-   确认安装路径（约定为 `/opt/soft/nginx/conf`，见 `specs/deployment-common.md` 第一节），本 skill
-   不会自动执行安装、`nginx -t`、`nginx -s reload`。
+   确认安装路径（约定为 `/opt/soft/nginx/conf`，见本 skill 目录下 `specs/deployment-common.md`
+   第一节），本 skill 不会自动执行安装、`nginx -t`、`nginx -s reload`。
 3. **不要**自动执行任何 `nginx -s reload` 或覆盖 `/opt/soft/nginx/conf` 下的现有文件——那是全局共享
-   基础设施，涉及安装/重载必须由用户在确认目标主机状态后自己执行（见
+   基础设施，涉及安装/重载必须由用户在确认目标主机状态后自己执行（见本 skill 目录下
    `specs/deployment-common.md` 第三节共享基础设施操作规范）。
 
 ## 五、完成提示
@@ -142,7 +142,8 @@ deploy-conf/nginx/
    1. 为具体服务生成 vhost 配置：/new-java-project <service-name> ...
       生成结果放进 deploy-conf/nginx/vhosts/ 后即可通过 nginx.conf 的
       include vhosts/*.conf; 自动生效
-   2. 准备 SSL 证书：放进 deploy-conf/nginx/cert/，或用 templates/scripts/apply-ssl.sh 申请
+   2. 准备 SSL 证书：放进 deploy-conf/nginx/cert/，或用 /new-deploy、/new-java-project
+      生成的 scripts/apply-ssl.sh 申请
    3. 确认目标主机上的安装路径与本机现有 nginx 配置的关系后再决定是否覆盖安装
    ```
 
@@ -150,11 +151,11 @@ deploy-conf/nginx/
 
 ## 六、注意事项
 
-- **不要修改 `software-engineering-skills/templates/deploy-conf/nginx/`** 中的模板内容作为本次
+- **不要修改本 skill 目录下 `templates/deploy-conf/nginx/`** 中的模板内容作为本次
   任务的副产品——如果模板本身需要更新，那是独立的一次修改（并同步更新本 skill 文件的说明），
   不要在给某个目标工程生成配置的过程中顺带改模板。
 - 生成的文件如果目标路径已存在且有差异，**先展示差异，询问用户是否覆盖**，不要直接覆盖。
 - `cert/` 目录不预置任何证书，`vhosts/` 目录不预置任何具体服务的配置——两者都只有说明文档，
   避免把某次生成时机器上偶然存在的证书或 vhost 误当作"通用模板"打包进去。
-- **绝不生成或覆盖 `vhosts/<service-name>.*.conf`**——这些文件完全属于 `/new-java-project`，
-  即使模板目录里存在 `vhosts/service.dev.conf` 等原始模板文件，本 skill 复制目录树时也要跳过它们。
+- **绝不生成或覆盖 `vhosts/<service-name>.*.conf`**——这些文件完全属于 `/new-java-project`；
+  本 skill 的模板副本中不含任何 vhost 服务模板，目标工程的 `vhosts/` 下已有的服务配置也一律不触碰。

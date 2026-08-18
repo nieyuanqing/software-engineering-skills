@@ -94,9 +94,11 @@ scripts/android-build.sh
 
 ### 模板来源
 
+以下路径均相对于**本 skill 目录**（安装后通常为 `~/.qoder/skills/new-android-build/`），模板随 skill 一起分发，不依赖任何仓库克隆或本地工程。
+
 | 目标文件 | 模板来源 |
 |---|---|
-| `scripts/android-build.sh` | `software-engineering-skills/templates/scripts/android-build.sh` |
+| `scripts/android-build.sh` | `templates/scripts/android-build.sh` |
 
 ### 占位符替换
 

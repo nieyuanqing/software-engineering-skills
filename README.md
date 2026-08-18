@@ -23,62 +23,62 @@
 
 ## 目录结构
 
+每个 skill 是 `.claude/skills/<name>/` 下的**自包含目录**（SKILL.md + 所需模板/规范副本），安装即整目录复制，与任何本地工程无关。
+
 ```
 software-engineering-skills/
-├── specs/
-│   ├── deployment-common.md           跨项目通用的共享主机部署规范（目录约定、端口登记、
-│   │                                  supervisord/nginx 操作安全规范、健康检查强制规则）
-│   ├── deployment-template.md         项目专属 specs/deployment.md 的填空模板
-│   └── baseline-versions-template.md  项目专属 specs/baseline-versions.md 的填空模板
-│                                      （JDK、PostgreSQL、Spring Boot 等基线版本）
-├── templates/
-│   ├── scripts/
-│   │   ├── deploy.sh             部署脚本模板（backend/web/ssl 三个 target；本地/远程部署；
-│   │   │                         inline supervisord 配置；nginx 自动同步；Phase N/M 日志；
-│   │   │                         [STATUS] 机器可读输出；420s 健康检查；部署摘要）
-│   │   ├── apply-ssl.sh          SSL 证书申请脚本模板（Let's Encrypt + acme.sh）
-│   │   ├── android-build.sh      Android 编译校验脚本模板（默认 compileDebugKotlin，
-│   │   │                         不签名不出 APK；SDK 定位 local.properties → ANDROID_HOME；
-│   │   │                         gradlew 优先回退系统 gradle；release task 校验签名环境变量）
-│   │   └── macos-build.sh        iOS 构建校验与打包脚本模板（模拟器编译校验 + .app zip 归档
-│   │                             mobile-apps/；--run 模拟器启动；--ipa 打真机 .ipa；
-│   │                             产物名/Bundle ID/版本从 build settings 动态读取）
-│   ├── deploy-conf/
-│   │   ├── nginx/                 nginx 配置目录（/new-nginx-conf 与 /new-java-project 共用）
-│   │   │   ├── nginx.conf          主配置（/new-nginx-conf 所属，worker/事件/http 层通用参数 + include 链）
-│   │   │   ├── mime.types          标准 MIME 类型表（/new-nginx-conf 所属）
-│   │   │   ├── subconf/            global/log/ssl/cross_domain/geo/error_pages 六个通用片段（/new-nginx-conf 所属）
-│   │   │   ├── upstream/upstream.conf  upstream 扩展点，默认空（/new-nginx-conf 所属）
-│   │   │   ├── cert/README.md      说明 SSL 证书应放在这里，不纳入版本管理（/new-nginx-conf 所属）
-│   │   │   ├── html/               通用错误页 404/405/500/502/503/504（/new-nginx-conf 所属）
-│   │   │   └── vhosts/             各服务 vhost 配置目录
-│   │   │       ├── README.md         说明本目录用途（/new-nginx-conf 所属，只落地一次）
-│   │   │       ├── service.dev.conf  nginx vhost 模板（/new-java-project 所属，dev 环境，HTTP/IP+端口）
-│   │   │       ├── service.test.conf nginx vhost 模板（/new-java-project 所属，test 环境，HTTPS/域名）
-│   │   │       └── service.prod.conf nginx vhost 模板（/new-java-project 所属，prod 环境，HTTPS/域名）
-│   │   ├── supervisor/             （参考模板，不再由 skill 生成；supervisord 配置现由 deploy.sh 在部署时 inline 生成）
-│   │   │   ├── service.dev.ini
-│   │   │   ├── service.test.ini
-│   │   │   └── service.prod.ini
-│   │   ├── env.dev       环境变量模板（dev，含 SPRING_PROFILES_ACTIVE=dev）
-│   │   ├── env.test      环境变量模板（test，含 SPRING_PROFILES_ACTIVE=test）
-│   │   └── env.prod      环境变量模板（prod，含 SPRING_PROFILES_ACTIVE=prod）
-│   └── src/main/resources/
-│       ├── application.yml       Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
-│       ├── application-dev.yml   dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
-│       ├── application-test.yml  test profile（INFO 日志，Swagger 开启）
-│       └── application-prod.yml  prod profile（WARN 日志，Swagger 关闭）
-└── .claude/
-    └── skills/
-        ├── new-java-project.md   Claude Code skill 定义（为 Java/Spring Boot 工程生成完整部署配置）
-        ├── new-deploy.md         Claude Code skill 定义（单独生成/更新 deploy.sh 和 apply-ssl.sh）
-        ├── new-nginx-conf.md     Claude Code skill 定义（生成标准通用的 nginx 主配置目录）
-        ├── new-android-build.md  Claude Code skill 定义（生成 Android 编译校验脚本 android-build.sh）
-        ├── new-macos-build.md    Claude Code skill 定义（生成 iOS 构建校验与打包脚本 macos-build.sh）
-        ├── common-rules.md       Claude Code skill 定义（通用行为规范：任务摘要、v0 文档保护、禁止硬编码）
-        ├── aibug.md              Claude Code skill 定义（连接 aibug 系统，自动循环修复 Bug）
-        └── web-api-test.md       Claude Code skill 定义（src/web 前端逐页检查后端 API 是否 200，非 200 前后端定位修复）
+├── CLAUDE.md                          项目维护规则（自包含布局、共享副本同步、路径禁令）
+├── README.md
+└── .claude/skills/
+    ├── aibug/SKILL.md                 连接 aibug 系统，自动循环修复 Bug
+    ├── common-rules/SKILL.md          通用行为规范（任务摘要、v0 文档保护、禁止硬编码）
+    ├── web-api-test/SKILL.md          src/web 前端逐页检查后端 API 是否 200，非 200 前后端定位修复
+    ├── new-android-build/             生成 Android 编译校验脚本 android-build.sh
+    │   ├── SKILL.md
+    │   └── templates/scripts/android-build.sh
+    ├── new-macos-build/               生成 iOS 构建校验与打包脚本 macos-build.sh
+    │   ├── SKILL.md
+    │   └── templates/scripts/macos-build.sh
+    ├── new-deploy/                    单独生成/更新 deploy.sh 和 apply-ssl.sh
+    │   ├── SKILL.md
+    │   └── templates/scripts/
+    │       ├── deploy.sh              部署脚本模板（共享副本①，与 new-java-project 保持一致）
+    │       └── apply-ssl.sh           SSL 证书申请脚本模板（共享副本①）
+    ├── new-nginx-conf/                生成标准通用的 nginx 主机级基础配置
+    │   ├── SKILL.md
+    │   ├── specs/deployment-common.md 共享主机部署通用规范（共享副本②，与 new-java-project 保持一致）
+    │   └── templates/deploy-conf/nginx/   仅主机级文件（不含 vhost 服务模板）：
+    │       ├── nginx.conf             主配置（worker/事件/http 层通用参数 + include 链）
+    │       ├── mime.types             标准 MIME 类型表
+    │       ├── subconf/               global/log/ssl/cross_domain/geo/error_pages 六个通用片段
+    │       ├── upstream/upstream.conf upstream 扩展点，默认空
+    │       ├── cert/README.md         说明 SSL 证书应放在这里，不纳入版本管理
+    │       ├── html/                  通用错误页 404/405/500/502/503/504
+    │       └── vhosts/README.md       说明本目录用途（落地一次）
+    └── new-java-project/              为 Java/Spring Boot 工程生成完整部署配置
+        ├── SKILL.md
+        ├── specs/
+        │   ├── deployment-common.md   共享主机部署通用规范（共享副本②，目录约定、端口登记、
+        │   │                          supervisord/nginx 操作安全规范、健康检查强制规则）
+        │   ├── deployment-template.md       项目专属 specs/deployment.md 的填空模板
+        │   └── baseline-versions-template.md 项目专属 specs/baseline-versions.md 的填空模板
+        └── templates/
+            ├── scripts/
+            │   ├── deploy.sh          部署脚本模板（共享副本①，与 new-deploy 保持一致）
+            │   └── apply-ssl.sh       SSL 证书申请脚本模板（共享副本①）
+            ├── deploy-conf/
+            │   ├── env.dev/test/prod  环境变量模板三套（含 SPRING_PROFILES_ACTIVE）
+            │   └── nginx/vhosts/service.{dev,test,prod}.conf  vhost 模板三套（按服务名渲染）
+            └── src/main/resources/
+                ├── application.yml    Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
+                ├── application-dev.yml    dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
+                ├── application-test.yml   test profile（INFO 日志，Swagger 开启）
+                └── application-prod.yml   prod profile（WARN 日志，Swagger 关闭）
 ```
+
+> 目标工程里的 `deploy-conf/nginx/` 这棵目录树仍由 `/new-nginx-conf`（主机级文件）与
+> `/new-java-project`（vhost 片段）共同拥有，只是模板副本按职责拆分存放在两个 skill 目录中。
+> 标注"共享副本"的文件修改任一份必须同步另一份（见 CLAUDE.md）。
 
 ---
 
@@ -176,8 +176,8 @@ software-engineering-skills/
 
 ### `/new-nginx-conf`
 
-在当前目录生成标准、通用的 nginx 主机级基础配置到 `deploy-conf/nginx/`，内容取自本仓库的
-`templates/deploy-conf/nginx/`，提炼自一台生产主机的 `/opt/soft/nginx/conf`。
+在当前目录生成标准、通用的 nginx 主机级基础配置到 `deploy-conf/nginx/`，内容随 skill 目录分发
+（skill 自带 `templates/deploy-conf/nginx/` 副本），提炼自一台生产主机的 `/opt/soft/nginx/conf`。
 
 `deploy-conf/nginx/` 这棵目录树由 `/new-nginx-conf` 与 `/new-java-project` 共同拥有，但各自只处理
 自己负责的文件：`/new-nginx-conf` 生成主机级的 nginx 本身（`nginx.conf`、`subconf/`、`upstream/`、
@@ -215,9 +215,9 @@ software-engineering-skills/
 
 ### `/new-android-build`
 
-为含 Android 工程的仓库生成 `scripts/android-build.sh`——Android 编译校验脚本。脚本内容取自
-`templates/scripts/android-build.sh`（工程路径按标准约定 `src/android/` 推导，SDK 与签名凭据
-走环境变量），直接原样复制、无需传参。
+为含 Android 工程的仓库生成 `scripts/android-build.sh`——Android 编译校验脚本。脚本内容随 skill
+目录分发（skill 自带 `templates/scripts/android-build.sh` 副本，工程路径按标准约定 `src/android/`
+推导，SDK 与签名凭据走环境变量），直接原样复制、无需传参。
 
 **定位**：只管"本机改完代码后编译能不能过"，不签名、不产出可安装 APK；正式打包/签名/产物分发
 由工程自己的发布流程负责。
@@ -244,9 +244,9 @@ software-engineering-skills/
 ### `/new-macos-build`
 
 为含 iOS 工程的仓库生成 `scripts/macos-build.sh`——iOS 构建校验与打包脚本（仅在 macOS + Xcode
-环境运行）。脚本内容取自 `templates/scripts/macos-build.sh`：工程自动查找或 `-p` 指定，
-产物名 / Bundle ID / 版本号全部从 `xcodebuild -showBuildSettings` 动态读取，签名凭据走
-环境变量，直接原样复制、无需传参。
+环境运行）。脚本内容随 skill 目录分发（skill 自带 `templates/scripts/macos-build.sh` 副本）：
+工程自动查找或 `-p` 指定，产物名 / Bundle ID / 版本号全部从 `xcodebuild -showBuildSettings`
+动态读取，签名凭据走环境变量，直接原样复制、无需传参。
 
 **用法**
 
@@ -372,3 +372,18 @@ HTTP 200，非 200 的请求定位前后端原因并修复，修复后复验至�
 ```
 安装 skill：git@github.com:nieyuanqing/software-engineering-skills.git
 ```
+
+**安装流程**（智能体收到上述指令后执行，全程只依赖 GitHub 仓库，不依赖、不触碰任何本地工程）：
+
+1. 浅克隆仓库到临时目录：`git clone --depth 1 <url> /tmp/software-engineering-skills`
+2. 对每个要安装的 skill（全量安装即遍历 `.claude/skills/*`）：
+   `rm -rf ~/.qoder/skills/<name> && cp -a /tmp/software-engineering-skills/.claude/skills/<name> ~/.qoder/skills/<name>`
+   （`cp -a` 保留脚本执行位；其他工具复制到各自 skill 目录，如 Claude Code 用 `~/.claude/skills/`）
+3. 校验：每个安装目录含 `SKILL.md`，且其引用的 `templates/`、`specs/` 相对路径在目录内都存在
+4. 删除临时克隆目录
+
+每个 skill 目录完全自包含（SKILL.md + 所需模板/规范副本），安装后无需保留仓库克隆。
+**升级 = 同法重装**（先删旧目录再复制，避免残留旧文件）。
+
+> ⚠️ **破坏性变更**：旧版（扁平 `.claude/skills/<name>.md` 布局）安装的 skill 依赖仓库
+> `templates/` 路径，重构后已失效，请按上述步骤重装一次。旧版布局保留在 `legacy-flat-layout` 标签。

@@ -90,7 +90,7 @@
 [2026-07-28 18:02:42] ===== 3/5 写入 supervisord 配置 =====
 ```
 
-各项目部署脚本里做日志打印的辅助函数（通常叫 `log()` 或 `step()`）都应该实现这个格式，不要各自发明一套。`templates/scripts/deploy.sh` 里的 `step()/info()/warn()` 函数是这个约定的参照实现，可以直接抄。
+各项目部署脚本里做日志打印的辅助函数（通常叫 `log()` 或 `step()`）都应该实现这个格式，不要各自发明一套。由 `/new-deploy`、`/new-java-project` 生成的 deploy.sh 里的 `step()/info()/warn()` 函数是这个约定的参照实现，可以直接抄。
 
 ---
 
@@ -123,7 +123,7 @@ ss -tln | grep -E ':(<port1>|<port2>)\b'               # 目标端口是否空�
 
 5. **`supervisorctl restart`/`start` 本身会阻塞到 supervisord 配置里的 `startsecs` 结束才返回**——如果 `startsecs` 设得接近或超过应用真实启动耗时，健康检查会在这段阻塞已经等够之后才开始探测，第一次探测就通过，日志里的"耗时 N 秒"会永远趋近 0。这不是健康检查没生效，是两层等待时间重叠、互相掩盖了。`startsecs` 应该设得**小**（够用来判断"进程有没有立即崩溃"就行，如 3 秒），把"应用是否真正就绪"这件事完全交给健康检查去判断——这样日志里的耗时才反映应用真实的启动时间，而不是被 supervisord 的等待"吃掉"
 
-**参照实现**：`templates/scripts/deploy.sh` 里的 `wait_for_health()` 函数与 `templates/deploy-conf/supervisor/service.ini`（`startsecs=3`）。
+**参照实现**：由 `/new-deploy`、`/new-java-project` 生成的 deploy.sh 里的 `wait_for_health()` 函数；supervisord 配置中 `startsecs=3`。
 
 ---
 

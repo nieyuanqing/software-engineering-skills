@@ -5,7 +5,7 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 
 # new-java-project
 
-为新工程生成完整的标准化部署配置，包括部署脚本、nginx vhost、supervisord 配置、环境变量模板和部署规范文档。所有产物严格遵循 `specs/deployment-common.md` 的共享主机部署通用规范，不包含任何硬编码的项目信息。
+为新工程生成完整的标准化部署配置，包括部署脚本、nginx vhost、supervisord 配置、环境变量模板和部署规范文档。所有产物严格遵循本 skill 目录下 `specs/deployment-common.md` 的共享主机部署通用规范，不包含任何硬编码的项目信息。
 
 **触发条件**：用户要求为某工程创建部署配置、部署脚本、nginx/supervisor 配置，或说"初始化部署"。
 
@@ -54,7 +54,7 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
     - specs/deployment.md                  本工程专属部署规范文档
     - specs/baseline-versions.md           基线版本规范（JDK、PostgreSQL、Spring Boot 等）
 
-  所有产物遵循 specs/deployment-common.md 的跨项目通用规范：
+  所有产物遵循随本 skill 分发的 specs/deployment-common.md 跨项目通用规范：
     - 统一目录约定：/opt/soft/apps/<name>/、/data/logs/apps/<name>/
     - 健康检查端点：/api/<name>/health（Spring Boot Actuator，startsecs=10，健康检查最长等待 420s）
     - 部署日志格式：[YYYY-MM-DD HH:MM:SS] [deploy.sh] <message>，阶段日志：Phase N/M
@@ -82,7 +82,8 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 
 生成后自动执行
   chmod +x scripts/deploy.sh scripts/apply-ssl.sh
-  在 specs/deployment-common.md 的端口登记表中追加新端口行（如该文件存在）
+  在目标工程 specs/deployment-common.md 的端口登记表中追加新端口行
+  （如该文件不存在，询问用户是否用本 skill 自带副本初始化后再登记）
 
 注意
   - 如目标文件已存在，会展示差异并询问是否覆盖，不会静默覆盖
@@ -144,7 +145,7 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 
 ## 二、生成文件清单
 
-以下文件全部在**目标工程根目录**下生成（即用户当前在操作的工程，不是 software-engineering-skills 仓库本身）。
+以下文件全部在**目标工程根目录**下生成（即用户当前在操作的工程，不是 skill 安装目录本身）。
 `deploy-conf/nginx/vhosts/` 之外的 `deploy-conf/nginx/`（`nginx.conf`、`subconf/` 等主机级基础配置）
 属于 `/new-nginx-conf` skill，本 skill 不生成、不覆盖：
 
@@ -169,7 +170,7 @@ specs/baseline-versions.md
 
 ## 三、生成规则
 
-每个文件的内容来自 `software-engineering-skills` 仓库的对应模板文件，将所有占位符替换为实际参数值。
+每个文件的内容来自**本 skill 目录**下的对应模板文件（随 skill 一起分发，不依赖任何仓库克隆或本地工程），将所有占位符替换为实际参数值。
 
 ### 占位符替换表
 
@@ -188,22 +189,24 @@ specs/baseline-versions.md
 
 ### 各文件来源
 
+以下"模板来源"路径均相对于**本 skill 目录**（安装后通常为 `~/.qoder/skills/new-java-project/`）。
+
 | 目标文件 | 模板来源 |
 |---|---|
-| `scripts/deploy.sh` | `software-engineering-skills/templates/scripts/deploy.sh` |
-| `scripts/apply-ssl.sh` | `software-engineering-skills/templates/scripts/apply-ssl.sh` |
-| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.dev.conf` |
-| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.test.conf` |
-| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf` | `software-engineering-skills/templates/deploy-conf/nginx/vhosts/service.prod.conf` |
-| `deploy-conf/env.dev` | `software-engineering-skills/templates/deploy-conf/env.dev` |
-| `deploy-conf/env.test` | `software-engineering-skills/templates/deploy-conf/env.test` |
-| `deploy-conf/env.prod` | `software-engineering-skills/templates/deploy-conf/env.prod` |
-| `src/backend/<SERVICE_NAME>/src/main/resources/application.yml` | `software-engineering-skills/templates/src/main/resources/application.yml` |
-| `src/backend/<SERVICE_NAME>/src/main/resources/application-dev.yml` | `software-engineering-skills/templates/src/main/resources/application-dev.yml` |
-| `src/backend/<SERVICE_NAME>/src/main/resources/application-test.yml` | `software-engineering-skills/templates/src/main/resources/application-test.yml` |
-| `src/backend/<SERVICE_NAME>/src/main/resources/application-prod.yml` | `software-engineering-skills/templates/src/main/resources/application-prod.yml` |
-| `specs/deployment.md` | `software-engineering-skills/specs/deployment-template.md` |
-| `specs/baseline-versions.md` | `software-engineering-skills/specs/baseline-versions-template.md` |
+| `scripts/deploy.sh` | `templates/scripts/deploy.sh` |
+| `scripts/apply-ssl.sh` | `templates/scripts/apply-ssl.sh` |
+| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf` | `templates/deploy-conf/nginx/vhosts/service.dev.conf` |
+| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf` | `templates/deploy-conf/nginx/vhosts/service.test.conf` |
+| `deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf` | `templates/deploy-conf/nginx/vhosts/service.prod.conf` |
+| `deploy-conf/env.dev` | `templates/deploy-conf/env.dev` |
+| `deploy-conf/env.test` | `templates/deploy-conf/env.test` |
+| `deploy-conf/env.prod` | `templates/deploy-conf/env.prod` |
+| `src/backend/<SERVICE_NAME>/src/main/resources/application.yml` | `templates/src/main/resources/application.yml` |
+| `src/backend/<SERVICE_NAME>/src/main/resources/application-dev.yml` | `templates/src/main/resources/application-dev.yml` |
+| `src/backend/<SERVICE_NAME>/src/main/resources/application-test.yml` | `templates/src/main/resources/application-test.yml` |
+| `src/backend/<SERVICE_NAME>/src/main/resources/application-prod.yml` | `templates/src/main/resources/application-prod.yml` |
+| `specs/deployment.md` | `specs/deployment-template.md` |
+| `specs/baseline-versions.md` | `specs/baseline-versions-template.md` |
 
 ### `HAS_WEB=false` 时的处理
 
@@ -225,14 +228,17 @@ specs/baseline-versions.md
 chmod +x scripts/deploy.sh scripts/apply-ssl.sh
 ```
 
-### 更新 specs/deployment-common.md 端口登记（如工程中有此文件）
+### 更新目标工程 specs/deployment-common.md 端口登记
 
-在 `specs/deployment-common.md` 的「端口分配总表」中追加一行：
+在**目标工程**的 `specs/deployment-common.md`「端口分配总表」中追加一行：
 ```
 | `<NGINX_PORT>-<APP_PORT>` | <SERVICE_NAME>（见 [deployment.md](./deployment.md) 第三节） |
 ```
 
-如果工程没有 `specs/deployment-common.md`，跳过此步骤，但告知用户："请在共享主机的端口分配总表（deployment-common.md）中登记这两个端口，防止其他服务端口冲突。"
+如果目标工程没有 `specs/deployment-common.md`：
+1. 询问用户：`目标工程没有 specs/deployment-common.md（共享主机端口登记表）。是否用本 skill 自带的通用规范副本初始化该文件后再登记端口？（若这台主机上其他工程已有该文件，建议改为登记到那份文件）`
+2. 用户同意 → 将本 skill 目录下 `specs/deployment-common.md` 复制为目标工程 `specs/deployment-common.md`，然后追加端口行。
+3. 用户拒绝 → 跳过，但告知用户："请在共享主机的端口分配总表（deployment-common.md）中登记这两个端口，防止其他服务端口冲突。"
 
 ---
 
@@ -287,7 +293,7 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
 
 ## 六、注意事项
 
-- **不要修改 `specs/deployment-common.md`** 中的通用规范内容，只更新端口登记表。
+- **不要修改目标工程 `specs/deployment-common.md`** 中的通用规范内容，只更新端口登记表。
 - 生成的文件如果目标路径已存在，**先展示差异，询问用户是否覆盖**，不要直接覆盖。
 - `deploy-conf/env.*.example` 里的密码值保持占位符 `changeme`，不要填入任何真实凭证。
 - **supervisord 配置不再生成静态 ini 文件**：deploy.sh 在部署时 inline 生成 `/etc/supervisor/conf.d/<SERVICE_NAME>.conf`，无需在版本库中维护三份 supervisor ini 文件。

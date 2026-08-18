@@ -33,8 +33,8 @@ Thumbs.db
 *.bak
 
 # nginx 证书目录（私钥/证书文件，不纳入版本管理）
-templates/deploy-conf/nginx/cert/*.pem
-templates/deploy-conf/nginx/cert/*.key
+.claude/skills/new-nginx-conf/templates/deploy-conf/nginx/cert/*.pem
+.claude/skills/new-nginx-conf/templates/deploy-conf/nginx/cert/*.key
 deploy-conf/nginx/cert/*.pem
 deploy-conf/nginx/cert/*.key
 .qoder/
