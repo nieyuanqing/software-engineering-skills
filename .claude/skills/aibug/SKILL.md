@@ -99,6 +99,25 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 
 以下步骤循环执行，直到无更多 PENDING Bug 为止。
 
+### 执行过程输出要求（必做）
+
+每轮循环必须向用户**明文输出实际执行的调用命令**（占位符替换为真实值），包括：
+
+1. **取 Bug 命令**（3.1 执行时输出）：
+
+```
+[取 Bug] curl -s "{HOST}/aibug/api/bugs/next?projectId={PROJECT_ID}" -H "Authorization: Bearer ***"
+```
+
+2. **回传修复状态命令**（3.2 / 3.4 每次 PUT 执行时输出）：
+
+```
+[回传状态] curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" -H "Authorization: Bearer ***" -H "Content-Type: application/json" -d '{"status":"<实际状态>","projectId":{PROJECT_ID},...}'
+```
+
+- `{HOST}`、`{PROJECT_ID}`、`{id}` 均替换为真实值；token 一律显示为 `***`，禁止明文输出。
+- 输出命令后紧跟一行执行结果摘要（如 HTTP 状态与返回的 `status`/`error` 字段值）。
+
 ### 3.1 获取下一个 Bug
 
 ```bash
