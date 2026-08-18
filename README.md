@@ -373,17 +373,8 @@ HTTP 200，非 200 的请求定位前后端原因并修复，修复后复验至�
 安装 skill：git@github.com:nieyuanqing/software-engineering-skills.git
 ```
 
-**安装流程**（智能体收到上述指令后执行，全程只依赖 GitHub 仓库，不依赖、不触碰任何本地工程）：
-
-1. 浅克隆仓库到临时目录：`git clone --depth 1 <url> /tmp/software-engineering-skills`
-2. 对每个要安装的 skill（全量安装即遍历 `.claude/skills/*`）：
-   `rm -rf ~/.qoder/skills/<name> && cp -a /tmp/software-engineering-skills/.claude/skills/<name> ~/.qoder/skills/<name>`
-   （`cp -a` 保留脚本执行位；其他工具复制到各自 skill 目录，如 Claude Code 用 `~/.claude/skills/`）
-3. 校验：每个安装目录含 `SKILL.md`，且其引用的 `templates/`、`specs/` 相对路径在目录内都存在
-4. 删除临时克隆目录
-
 每个 skill 目录完全自包含（SKILL.md + 所需模板/规范副本），安装后无需保留仓库克隆。
-**升级 = 同法重装**（先删旧目录再复制，避免残留旧文件）。
+**升级 = 重新发送上面的安装指令**（先删旧目录再复制，避免残留旧文件）。
 
 > ⚠️ **破坏性变更**：旧版（扁平 `.claude/skills/<name>.md` 布局）安装的 skill 依赖仓库
-> `templates/` 路径，重构后已失效，请按上述步骤重装一次。旧版布局保留在 `legacy-flat-layout` 标签。
+> `templates/` 路径，重构后已失效，请重新发送上面的安装指令重装一次。旧版布局保留在 `legacy-flat-layout` 标签。
