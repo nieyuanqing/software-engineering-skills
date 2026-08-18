@@ -132,6 +132,15 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
   -d '{"status":"IN_PROGRESS","projectId":{PROJECT_ID}}'
 ```
 
+**回读验证**（必做）：PUT 后立即回读，确认状态确实落库，防止"提示成功、实际未生效"：
+
+```bash
+curl -s "{HOST}/aibug/api/bugs/{id}" \
+  -H "Authorization: Bearer <token>"
+```
+
+- 响应中 `status` 必须为 `IN_PROGRESS`，否则重试一次；仍不一致则**停止处理该 Bug**，向用户报告不一致详情。
+
 ### 3.3 分析并修复 Bug
 
 根据 Bug 的 `content` 字段描述：
@@ -166,6 +175,8 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - 需要修改的逻辑超出当前代码范围（依赖外部系统）
 - 描述不足以确定如何修复，且无法从上下文推断
 
+**回读验证**（必做）：PUT 后用与 3.2 相同的方式回读 `GET /bugs/{id}`，确认 `status` 为 `FIXED` 或 `FAILED`；不一致则重试一次，仍不一致则向用户告警并保留该 Bug 的 ID 与期望状态。
+
 ### 3.5 循环至下一个 Bug
 
 完成一个 Bug 的处理后，回到 **3.1**，继续获取下一个 PENDING Bug。
@@ -193,5 +204,6 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - 所有参数（HOST、USERNAME、PASSWORD、PROJECT_ID）均无默认值，必须由用户在每次调用时提供。
 - 密码仅用于登录请求，不写入任何文件，不在日志中明文输出。
 - `FAILED` 状态必须提供 `failReason`，否则 API 会返回错误。
+- 服务端对 `status` 做枚举校验（PENDING / IN_PROGRESS / FIXED / FAILED / RESOLVED / CLOSED），非法值返回 HTTP 400 及 `{"error": ...}`；每次 PUT 后必须检查响应中的 `error` 字段，出现则视为更新失败。
 - 每次修复前先标记 `IN_PROGRESS`，确保同一 Bug 不被并发处理。
 - 本 skill 仅修改代码文件，不执行 `git commit`，由用户决定是否提交修复结果。
