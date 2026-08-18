@@ -372,9 +372,3 @@ HTTP 200，非 200 的请求定位前后端原因并修复，修复后复验至�
 ```
 安装 skill：git@github.com:nieyuanqing/software-engineering-skills.git
 ```
-
-每个 skill 目录完全自包含（SKILL.md + 所需模板/规范副本），安装后无需保留仓库克隆。
-**升级 = 重新发送上面的安装指令**（先删旧目录再复制，避免残留旧文件）。
-
-> ⚠️ **破坏性变更**：旧版（扁平 `.claude/skills/<name>.md` 布局）安装的 skill 依赖仓库
-> `templates/` 路径，重构后已失效，请重新发送上面的安装指令重装一次。旧版布局保留在 `legacy-flat-layout` 标签。
