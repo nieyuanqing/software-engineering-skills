@@ -16,6 +16,8 @@
 | [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
 | [`/api‑test`](#api-test) | 全端（web 管理后台 / 小程序 / Android / iOS）扫描后端 API 生成 URL 清单，逐个验证 HTTP 200，非 200 与业务不合理处均定位修复 |
+| [`/do‑test`](#do-test) | 测试场景总驱动：调用 /api-test 完成 API 基本功能验证，并执行 test/cases/ 下的场景用例，汇总测试报告 |
+| [`/new‑test‑case`](#new-test-case) | 在 test/cases/ 下新增一个测试用例文件（TEST-CASE-{4位递增编号}.md），一次执行生成一个 |
 
 逐个 skill 的详细用法见下方对应章节。
 
@@ -33,6 +35,8 @@ software-engineering-skills/
     ├── aibug/SKILL.md                 连接 aibug 系统，自动循环修复 Bug
     ├── common-rules/SKILL.md          通用行为规范（任务摘要、v0 文档保护、禁止硬编码）
     ├── api-test/SKILL.md              全端扫描后端 API 生成 URL 清单，逐个验证 HTTP 200 并修复
+    ├── do-test/SKILL.md               测试总驱动：API 验证（委托 api-test）+ test/cases/ 场景用例
+    ├── new-test-case/SKILL.md         新增单个测试用例 TEST-CASE-{4位编号}.md 到 test/cases/
     ├── new-android-build/             生成 Android 编译校验脚本 android-build.sh
     │   ├── SKILL.md
     │   └── templates/scripts/android-build.sh
@@ -358,6 +362,61 @@ software-engineering-skills/
 4. 诊断修复：非 200 按状态码（404/405/400/401/403/500）先查客户端（路径/方法/参数/鉴权头），再查后端（mapping/参数绑定/安全白名单/异常日志），最小化修复后复验
 5. 业务合理性检查：对 200 响应检查返回内容（业务错误码、数据缺失/矛盾、与客户端预期不符），明显不合理的分析并修复
 6. 结果输出：汇总写入 `test/api/test-result.md` 并输出中文摘要
+
+---
+
+### `/do-test`
+
+测试场景总驱动：先调用 /api-test 完成所有客户端调用 API 的基本功能验证，
+再逐个执行 `test/cases/` 目录下定义的测试场景用例，最终汇总输出 `test/test-report.md`。
+
+**用法**
+
+```bash
+/do-test                                   # 完整执行：API 验证 + 全部场景用例
+/do-test --skip-api                        # 只跑场景用例
+/do-test --case=下单流程                   # 只执行指定场景（可多次传入）
+/do-test --no-fix                          # 只出报告，不改代码
+/do-test -h                                # 查看帮助
+```
+
+**可选参数**
+
+| 参数 | 说明 |
+|---|---|
+| `--skip-api` | 跳过 API 基本功能验证（/api-test 部分） |
+| `--skip-cases` | 跳过 test/cases/ 场景用例验证 |
+| `--case` | 只执行指定场景用例（文件名或场景名），可多次传入 |
+| `--no-fix` | 只检查并输出报告，不修改代码 |
+
+**工作流程**
+
+1. 前置检查：确认工程结构、扫描 `test/cases/` 用例清单
+2. API 验证：调用 /api-test（透传 `--no-fix`、`--base-url`），产出 `test/api/url-list.md` 与 `test/api/test-result.md`
+3. 场景验证：按用例定义的前置条件/步骤/预期结果逐个执行判定（支持 Markdown 与 YAML 用例；UI 步骤标记需人工）
+4. 汇总报告：合并两部分结果写入 `test/test-report.md` 并输出中文摘要
+
+---
+
+### `/new-test-case`
+
+在工程的 `test/cases/` 目录下新增一个测试场景用例文件。一次执行只生成一个文件，
+命名 `TEST-CASE-{4位递增编号}.md`（自动取现有最大编号 +1，从 0001 开始），
+结构与 /do-test 的用例格式兼容，生成后可直接被 /do-test 执行。
+
+**用法**
+
+```bash
+/new-test-case 下单流程：登录后可用商品1创建订单并查询订单详情
+/new-test-case                             # 交互询问场景内容后生成
+/new-test-case -h                          # 查看帮助
+```
+
+**工作流程**
+
+1. 确定 `test/cases/` 目录（不存在则创建）与下一个 4 位编号
+2. 收集场景信息：场景名、前置条件、测试步骤、预期结果（命令行已给描述则据此整理，缺项一次性交互补齐）
+3. 写入 `TEST-CASE-NNNN.md` 并输出摘要，提示可用 `/do-test --case=<场景名>` 立即执行
 
 ---
 
