@@ -15,7 +15,7 @@
 | [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本 |
 | [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
-| [`/web‑api‑test`](#web-api-test) | 针对 src/web 前端逐页检查调用的后端 API 是否返回 200，非 200 定位前后端原因并修复 |
+| [`/api‑test`](#api-test) | 全端（web 管理后台 / 小程序 / Android / iOS）扫描后端 API 生成 URL 清单，逐个验证 HTTP 200，非 200 与业务不合理处均定位修复 |
 
 逐个 skill 的详细用法见下方对应章节。
 
@@ -32,7 +32,7 @@ software-engineering-skills/
 └── .claude/skills/
     ├── aibug/SKILL.md                 连接 aibug 系统，自动循环修复 Bug
     ├── common-rules/SKILL.md          通用行为规范（任务摘要、v0 文档保护、禁止硬编码）
-    ├── web-api-test/SKILL.md          src/web 前端逐页检查后端 API 是否 200，非 200 前后端定位修复
+    ├── api-test/SKILL.md              全端扫描后端 API 生成 URL 清单，逐个验证 HTTP 200 并修复
     ├── new-android-build/             生成 Android 编译校验脚本 android-build.sh
     │   ├── SKILL.md
     │   └── templates/scripts/android-build.sh
@@ -325,37 +325,39 @@ software-engineering-skills/
 
 ---
 
-### `/web-api-test`
+### `/api-test`
 
-针对集成了后端服务 API 的 src/web 前端（含 v0 生成代码），逐页检查其调用的后端 API 是否返回
-HTTP 200，非 200 的请求定位前后端原因并修复，修复后复验至通过。
+完整扫描工程中所有客户端（web 管理后台、小程序、Android、iOS）代码，静态收集后端 API 调用，
+整理成 URL 清单后逐个实际请求验证：HTTP 非 200 的定位前后端原因并修复；200 但返回内容业务层面
+明显不合理的也一并修复。产物为 `test/api/url-list.md`（清单）与 `test/api/test-result.md`（结果）。
 
 **用法**
 
 ```bash
-/web-api-test                              # 自动探测后端地址，全量检查并修复
-/web-api-test --page=/order/list           # 只检查指定页面（可多次传入）
-/web-api-test --base-url=http://localhost:8080/api/mall --allow-write
-/web-api-test --no-fix                     # 只出报告，不改代码
-/web-api-test -h                           # 查看帮助
+/api-test                                  # 扫描全部端，自动探测后端地址，检查并修复
+/api-test --client=web                     # 只扫描 web 管理后台（可多次传入）
+/api-test --base-url=http://localhost:8080/api/mall --allow-write
+/api-test --no-fix                         # 只出报告，不改代码
+/api-test -h                               # 查看帮助
 ```
 
 **可选参数**
 
 | 参数 | 说明 |
 |---|---|
-| `--base-url` | 后端 API 基础地址；不传则自动探测（前端 env / proxy 配置 / nginx vhost / specs） |
-| `--page` | 只测指定页面路由，可多次传入；不传则测全部页面 |
+| `--base-url` | 后端 API 基础地址；不传则自动探测（各端 env / proxy 配置 / nginx vhost / specs） |
+| `--client` | 只扫描指定端（web / miniapp / android / ios），可多次传入；不传则扫描实际存在的所有端 |
 | `--allow-write` | 允许直接探测 POST/PUT/DELETE 写操作 API（默认逐个询问） |
 | `--no-fix` | 只检查并输出报告，不修改代码 |
 
 **工作流程**
 
-1. 前置检查：`src/web/` 存在、识别路由结构（Next.js / Vue Router / React Router）、探测后端 base url、健康检查确认后端在线、确认鉴权 token 获取方式
-2. 逐页枚举：静态收集每个页面（含其引入的 service/hook 文件）调用的后端 API——方法 + 路径 + 参数来源
-3. 逐个探测：curl 实际请求，记录状态码与响应体；GET 直接探测，写操作默认需用户确认
-4. 诊断修复：非 200 按状态码（404/405/400/401/403/500）先查前端（路径/方法/参数/鉴权头），再查后端（mapping/参数绑定/安全白名单/异常日志），最小化修复后复验
-5. 汇总报告：页面 × API × 首次状态 × 最终状态 × 处置结果中文清单 + 修改文件清单
+1. 前置检查：识别工程中存在的客户端目录、探测后端 base url、健康检查确认后端在线、确认鉴权 token 获取方式
+2. 全端扫描：静态收集各端代码调用的后端 API（方法 + 路径 + 参数），写入 `test/api/url-list.md`
+3. 逐个验证：curl 实际请求，首先判断 HTTP 响应码是否 200；GET 直接探测，写操作默认需用户确认
+4. 诊断修复：非 200 按状态码（404/405/400/401/403/500）先查客户端（路径/方法/参数/鉴权头），再查后端（mapping/参数绑定/安全白名单/异常日志），最小化修复后复验
+5. 业务合理性检查：对 200 响应检查返回内容（业务错误码、数据缺失/矛盾、与客户端预期不符），明显不合理的分析并修复
+6. 结果输出：汇总写入 `test/api/test-result.md` 并输出中文摘要
 
 ---
 
