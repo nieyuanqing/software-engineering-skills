@@ -373,8 +373,9 @@ software-engineering-skills/
 **用法**
 
 ```bash
-/do-test                                   # 完整执行：API 验证 + 全部场景用例
-/do-test --skip-api                        # 只跑场景用例
+/do-test                                   # 默认全部执行：API 验证 + 全部场景用例
+/do-test --task=api                        # 只执行 API 基本功能验证
+/do-test --task=cases                      # 只执行场景用例验证
 /do-test --case=下单流程                   # 只执行指定场景（可多次传入）
 /do-test --no-fix                          # 只出报告，不改代码
 /do-test -h                                # 查看帮助
@@ -384,14 +385,13 @@ software-engineering-skills/
 
 | 参数 | 说明 |
 |---|---|
-| `--skip-api` | 跳过 API 基本功能验证（/api-test 部分） |
-| `--skip-cases` | 跳过 test/cases/ 场景用例验证 |
-| `--case` | 只执行指定场景用例（文件名或场景名），可多次传入 |
+| `--task` | 只执行指定单项任务（api / cases），可多次传入；不传默认全部执行 |
+| `--case` | 只执行指定场景用例（文件名或场景名），可多次传入；隐含 --task=cases |
 | `--no-fix` | 只检查并输出报告，不修改代码 |
 
 **工作流程**
 
-1. 前置检查：确认工程结构、扫描 `test/cases/` 用例清单
+1. 前置检查：确定任务范围（--task，默认全部）、确认工程结构、扫描 `test/cases/` 用例清单
 2. API 验证：调用 /api-test（透传 `--no-fix`、`--base-url`），产出 `test/api/url-list.md` 与 `test/api/test-result.md`
 3. 场景验证：按用例定义逐步执行判定，步骤类型 API（curl）/ UI（支持 Playwright 时自动转写执行，否则标记需人工）/ 人工，执行后核对结果验证与善后清理
 4. 汇总报告：合并两部分结果写入 `test/test-report.md` 并输出中文摘要

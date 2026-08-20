@@ -1,6 +1,6 @@
 ---
 name: do-test
-description: 测试场景总驱动。一键编排执行工程的全部测试：先调用 /api-test skill 完成所有客户端调用 API 的基本功能验证（产物 test/api/url-list.md、test/api/test-result.md），再逐个执行 test/cases/ 目录下定义的测试场景用例并判定通过/失败，最终汇总输出测试报告 test/test-report.md。当用户要求"跑全部测试"、"执行测试场景"、"回归测试"、"整体验证"时触发。支持 /do-test -h 查看帮助。
+description: 测试场景总驱动。一键编排执行工程的全部测试（默认全部执行，可用 --task=api|cases 指定单项任务）：调用 /api-test skill 完成所有客户端调用 API 的基本功能验证（产物 test/api/url-list.md、test/api/test-result.md），逐个执行 test/cases/ 目录下定义的测试场景用例并判定通过/失败，最终汇总输出测试报告 test/test-report.md。当用户要求"跑全部测试"、"执行测试场景"、"回归测试"、"整体验证"时触发。支持 /do-test -h 查看帮助。
 ---
 
 # do-test
@@ -23,27 +23,29 @@ description: 测试场景总驱动。一键编排执行工程的全部测试：�
 用法: /do-test [选项]
 
 选项（通过命令行传入的参数直接使用，不再交互询问）
-  --skip-api        跳过 API 基本功能验证（/api-test 部分）
-  --skip-cases      跳过 test/cases/ 场景用例验证
-  --case=<名称>     只执行指定场景用例（文件名或场景名，可多次传入）
+  --task=<任务>     只执行指定单项任务：api（API 基本功能验证）或
+                    cases（场景用例验证）；可多次传入；不传则默认全部执行
+  --case=<名称>     只执行指定场景用例（文件名或场景名，可多次传入；
+                    隐含 --task=cases）
   --no-fix          只检查并输出报告，不修改任何代码
   -h, --help        显示本帮助
 
 工作流程
-  1. 前置检查：确认工程结构（src/ 存在）、确认 test/cases/ 是否有用例
+  1. 前置检查：确认工程结构（src/ 存在）、按任务范围确认 test/cases/ 用例
   2. API 验证：调用 /api-test skill，全端扫描 API 并逐个验证 HTTP 200、
      检查业务合理性，产出 test/api/url-list.md 与 test/api/test-result.md
   3. 场景验证：逐个读取 test/cases/ 下的用例文件，按步骤执行并判定结果
-  4. 汇总报告：合并两部分结果写入 test/test-report.md，输出中文摘要
+  4. 汇总报告：按实际执行的任务合并结果写入 test/test-report.md，输出中文摘要
 
 产物
   test/api/url-list.md     API URL 清单（由 /api-test 产出）
   test/api/test-result.md  API 验证与修复结果（由 /api-test 产出）
-  test/test-report.md      总测试报告（API 结果 + 场景用例结果）
+  test/test-report.md      总测试报告（按执行范围：API 结果 + 场景用例结果）
 
 示例
-  /do-test                     完整执行：API 验证 + 全部场景用例
-  /do-test --skip-api          只跑场景用例
+  /do-test                     默认全部执行：API 验证 + 全部场景用例
+  /do-test --task=api          只执行 API 基本功能验证
+  /do-test --task=cases        只执行场景用例验证
   /do-test --case=下单流程     只执行指定场景
   /do-test --no-fix            只出报告，不改代码
   /do-test -h                  显示本帮助
@@ -53,17 +55,18 @@ description: 测试场景总驱动。一键编排执行工程的全部测试：�
 
 ## 一、前置检查
 
+0. **确定任务范围**：解析 `--task`（可多个：`api` / `cases`）；传入 `--case` 时隐含包含 `cases`；未传 `--task` 与 `--case` 时默认 `api + cases` 全部执行。取值非法则报错并输出帮助后终止。
 1. 确认当前工作目录存在 `src/`（工程根）；不存在则报告并终止。
-2. 检查 `test/cases/` 目录：
+2. 任务含 `cases` 时，检查 `test/cases/` 目录：
    - 存在且有用例文件 → 记录待执行清单。
-   - 不存在或为空 → 提示用户"暂无场景用例，将只执行 API 验证"，继续。
+   - 不存在或为空 → 提示用户"暂无场景用例"，跳过 cases 任务。
 3. 若 `test/test-report.md` 已存在，先读取记录上一轮结果，供本轮报告中标注"回归对比"。
 
 ---
 
 ## 二、API 基本功能验证
 
-除非传入 `--skip-api`：
+仅当任务范围含 `api` 时执行：
 
 1. 用 Skill 工具调用 **api-test** skill 执行全端 API 验证；将本命令收到的 `--no-fix`、用户提供的 `--base-url` 等参数透传给它。
 2. /api-test 完成后确认产物存在：`test/api/url-list.md`、`test/api/test-result.md`。
@@ -73,7 +76,7 @@ description: 测试场景总驱动。一键编排执行工程的全部测试：�
 
 ## 三、场景用例验证
 
-除非传入 `--skip-cases`。
+仅当任务范围含 `cases` 时执行。
 
 ### 3.1 用例格式
 
@@ -121,7 +124,7 @@ description: 测试场景总驱动。一键编排执行工程的全部测试：�
 
 ## 四、汇总报告
 
-将总结果写入 `test/test-report.md`：
+将总结果写入 `test/test-report.md`（只写实际执行的任务对应章节，未执行的任务注明"本轮未执行"）：
 
 ```markdown
 # 测试报告
