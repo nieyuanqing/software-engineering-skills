@@ -393,7 +393,7 @@ software-engineering-skills/
 
 1. 前置检查：确定任务范围（--task，默认全部）、确认工程结构、扫描 `test/cases/` 用例清单
 2. API 验证：调用 /api-test（透传 `--no-fix`、`--base-url`），产出 `test/api/url-list.md` 与 `test/api/test-result.md`
-3. 场景验证：按用例定义逐步执行判定，步骤类型 API（curl）/ UI（支持 Playwright 时自动转写执行，否则标记需人工）/ 人工，执行后核对结果验证与善后清理
+3. 场景验证：按用例定义逐步执行判定，步骤类型 API（curl）/ UI（支持 Playwright 时自动转写执行，否则标记需人工）/ 人工，执行后核对结果验证与善后清理；case-summary.md 存在时按其优先级（P0→P1→P2）排序执行，否则默认顺序
 4. 汇总报告：合并两部分结果写入 `test/test-report.md` 并输出中文摘要
 
 ---

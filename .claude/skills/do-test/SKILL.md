@@ -34,7 +34,8 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
   1. 前置检查：确认工程结构（src/ 存在）、按任务范围确认 test/cases/ 用例
   2. API 验证：调用 /api-test skill，全端扫描 API 并逐个验证 HTTP 200、
      检查业务合理性，产出 test/api/url-list.md 与 test/api/test-result.md
-  3. 场景验证：逐个读取 test/cases/ 下的用例文件，按步骤执行并判定结果
+  3. 场景验证：逐个读取 test/cases/ 下的用例文件，按步骤执行并判定结果；
+     case-summary.md 存在时按其优先级（P0→P1→P2）排序执行，否则默认顺序
   4. 汇总报告：按实际执行的任务合并结果写入 test/test-report.md，输出中文摘要
 
 产物
@@ -77,6 +78,8 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
 ## 三、场景用例验证
 
 仅当任务范围含 `cases` 时执行。
+
+**执行顺序**：`test/cases/case-summary.md` 存在时，按其中定义的优先级排序执行（P0 → P1 → P2，同优先级按用例编号升序）；摘要中未收录的用例排在最后（按编号升序）。不存在 `case-summary.md` 时按默认顺序执行（文件名/编号升序）。
 
 ### 3.1 用例格式
 
