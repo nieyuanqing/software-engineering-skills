@@ -1,6 +1,6 @@
 # software-engineering-skills
 
-软件工程 Skill 集合，为 Java/Spring Boot 工程与共享主机 nginx 基础设施提供标准化的配置生成能力。
+软件开发过程中的 Skills 集合。
 
 ---
 
