@@ -34,7 +34,7 @@
 | [`/api‑test`](#api-test) | 全端（web 管理后台 / 小程序 / Android / iOS）扫描后端 API 生成 URL 清单，逐个验证 HTTP 200，非 200 与业务不合理处均定位修复 |
 | [`/do‑test`](#do-test) | 测试场景总驱动：调用 /api-test 完成 API 基本功能验证，并执行 test/cases/ 下的场景用例，汇总测试报告 |
 | [`/new‑test‑case`](#new-test-case) | 在 test/cases/ 下新增一个测试用例文件（TEST-CASE-{4位递增编号}.md），一次执行生成一个 |
-| [`/do‑security‑check`](#do-security-check) | 全维度安全检测：静态（Semgrep SAST + Trivy 依赖漏洞/密钥/Git 历史/IaC/许可证/SBOM + 智能体源码分析）、运行时（安全头/OWASP/JWT/TLS/端口，可选 Nuclei/ZAP）、供应链（容器镜像） |
+| [`/do‑security‑check`](#do-security-check) | 全维度安全检测：静态（Semgrep SAST + Trivy 依赖漏洞/密钥/Git 历史/IaC/许可证/SBOM + 智能体源码分析）、运行时（安全头/OWASP/JWT/TLS/端口，可选 Nuclei/ZAP） |
 
 逐个 skill 的详细用法见下方对应章节。
 
@@ -450,13 +450,12 @@ software-engineering-skills/
 
 ### `/do-security-check`
 
-全维度安全检测，三大阶段：
+全维度安全检测，两大阶段：
 
 - **静态**（默认全跑）：智能体源码分析、Semgrep SAST、Trivy SCA 依赖漏洞、密钥泄露、
   Git 历史密钥、IaC/配置错误、许可证合规、SBOM（CycloneDX）
 - **运行时**（`--url` 启用）：HTTP 安全头、OWASP Top 10 只读探测、JWT/Cookie 检查、
   TLS/SSL 配置、端口暴露面；Nuclei/ZAP 可用时追加
-- **供应链**（`--image` 启用）：容器镜像 CVE/密钥/配置
 
 汇总输出 `test/security/security-check-report.md`，可选最小化修复。
 第三方工具（semgrep / trivy / gitleaks / testssl.sh / nmap / nuclei / ZAP）
@@ -468,7 +467,6 @@ software-engineering-skills/
 /do-security-check                                   # 全量静态检测（augmented 模式）
 /do-security-check --type=sca --type=secret          # 只查依赖漏洞与密钥
 /do-security-check --url=http://staging.example.com  # 追加运行时检测
-/do-security-check --image=myapp:latest              # 追加容器镜像检测
 /do-security-check --mode=auto --fix                 # 仅工具检测并最小化修复
 /do-security-check -h                                # 查看帮助（含第三方工具安装方法）
 ```
@@ -478,9 +476,8 @@ software-engineering-skills/
 | 参数 | 说明 |
 |---|---|
 | `--scope` | 静态扫描路径，默认工程根目录（自动排除 .git/node_modules/target 等） |
-| `--type` | 只执行指定维度（review/sast/sca/secret/history/iac/license/sbom/dast/ssl/port/nuclei/zap/image/all），可多次传入；默认全部静态维度 |
+| `--type` | 只执行指定维度（review/sast/sca/secret/history/iac/license/sbom/dast/ssl/port/nuclei/zap/all），可多次传入；默认全部静态维度 |
 | `--url` | 运行时检测目标（须为 staging/测试环境），自动启用 dast+ssl |
-| `--image` | 容器镜像扫描（自动启用 image 维度） |
 | `--mode` | auto=仅工具；augmented=工具 + 智能体深度分析（默认） |
 | `--severity` | 报告过滤级别（默认全部展示，CRITICAL/HIGH 高亮） |
 | `--fix` | 对高置信问题执行最小化修复并复扫（默认只出报告） |
@@ -490,5 +487,4 @@ software-engineering-skills/
 1. 前置检查：第三方工具可用性（缺失给出安装命令，经同意后安装）
 2. 静态检测：按维度执行，收集 JSON 结构化结果
 3. 运行时检测（有 `--url`）：安全头 + OWASP 只读探测 + JWT + TLS + 端口暴露面；nuclei/zap 可用时追加
-4. 供应链检测（有 `--image`）：镜像 CVE/密钥/配置
-5. 汇总修复：`--fix` 时最小化修复并复扫，报告写入 `test/security/security-check-report.md`
+4. 汇总修复：`--fix` 时最小化修复并复扫，报告写入 `test/security/security-check-report.md`

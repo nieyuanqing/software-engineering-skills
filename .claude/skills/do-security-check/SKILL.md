@@ -1,11 +1,11 @@
 ---
 name: do-security-check
-description: 全维度安全检测（静态 + 运行时 + 供应链）。静态：智能体源码分析、Semgrep SAST、Trivy SCA 依赖漏洞、密钥泄露、Git 历史密钥、IaC 配置错误、许可证合规、SBOM；运行时：HTTP 安全头、OWASP Top 10 只读探测、JWT/Cookie 检查、TLS/SSL 配置、端口暴露面、Nuclei 模板扫描、OWASP ZAP 被动扫描；供应链：容器镜像扫描。汇总报告 test/security/security-check-report.md，可选 --fix 最小化修复。当用户要求"安全扫描/安全检查"、"SAST/SCA/DAST"、"依赖漏洞"、"密钥泄露"、"OWASP 检查"、"TLS 检查"、"生成 SBOM"时触发。支持 /do-security-check -h 查看帮助。
+description: 全维度安全检测（静态 + 运行时）。静态：智能体源码分析、Semgrep SAST、Trivy SCA 依赖漏洞、密钥泄露、Git 历史密钥、IaC 配置错误、许可证合规、SBOM；运行时：HTTP 安全头、OWASP Top 10 只读探测、JWT/Cookie 检查、TLS/SSL 配置、端口暴露面、Nuclei 模板扫描、OWASP ZAP 被动扫描。汇总报告 test/security/security-check-report.md，可选 --fix 最小化修复。当用户要求"安全扫描/安全检查"、"SAST/SCA/DAST"、"依赖漏洞"、"密钥泄露"、"OWASP 检查"、"TLS 检查"、"生成 SBOM"时触发。支持 /do-security-check -h 查看帮助。
 ---
 
 # do-security-check
 
-对工程做全维度安全检测：静态分析、运行时验证、供应链检查，汇总为统一报告。
+对工程做全维度安全检测：静态分析 + 运行时验证，汇总为统一报告。
 
 ## 检测维度总览
 
@@ -34,12 +34,6 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
 | 模板漏洞扫描 | nuclei | Nuclei（可选） | 数千个现成漏洞模板快速扫描 |
 | Web 被动扫描 | zap | OWASP ZAP（可选） | 被动扫描、AJAX 爬取、头部分析 |
 
-### 供应链（需 `--image`）
-
-| 维度 | --type 值 | 工具 | 说明 |
-|---|---|---|---|
-| 容器镜像 | image | Trivy (image) | 镜像 OS 包 + 应用依赖 CVE、镜像内密钥与配置错误 |
-
 **触发条件**：用户要求安全扫描/安全检查、漏洞扫描、密钥检查、OWASP/TLS 检查、SBOM，或直接输入 /do-security-check。
 
 **能力边界**（报告中声明）：架构/业务逻辑级漏洞、云与 IAM 配置、物理/社工面、零日漏洞不在自动化覆盖范围，需人工评审或渗透测试。
@@ -55,31 +49,23 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
 ```
 用法: /do-security-check [选项]
 
-选项（通过命令行传入的参数直接使用，不再交互询问）
-  --scope=<路径>      静态扫描范围（默认工程根目录；自动排除
-                      .git / node_modules / target / dist / v0 文档目录）
-  --type=<维度>       只执行指定维度，可多次传入；取值：
-                      review / sast / sca / secret / history / iac / license / sbom
-                      dast / ssl / port / nuclei / zap / image / all
-                      不传默认：全部静态维度（运行时与镜像需显式 --url / --image）
-  --url=<地址>        运行时检测目标（staging/测试环境 URL，自动启用 dast+ssl）
-  --image=<名称[:tag]>  容器镜像扫描（自动启用 image 维度）
-  --mode=<auto|augmented>
-                      auto=仅工具；augmented=工具 + 智能体深度分析，默认 augmented
-  --severity=<级别>   报告过滤：CRITICAL,HIGH,MEDIUM,LOW（默认全部展示，
-                      CRITICAL/HIGH 置顶高亮）
-  --fix               对高置信问题执行最小化修复（默认只出报告）
-  -h, --help          显示本帮助
+选项（通过命令行传入的参数直接使用，不再交互询问；每项一行，不再换行续写）
+  --scope=<路径>           静态扫描范围，默认工程根目录（自动排除 .git/node_modules/target/dist/v0）
+  --type=<维度>            只执行指定维度，可多次传入；取值 review/sast/sca/secret/history/iac/license/sbom/dast/ssl/port/nuclei/zap/all，默认全部静态维度
+  --url=<地址>             运行时检测目标（staging/测试环境 URL），自动启用 dast+ssl
+  --mode=<auto|augmented>  auto=仅工具；augmented=工具 + 智能体深度分析（默认 augmented）
+  --severity=<级别>        报告过滤 CRITICAL,HIGH,MEDIUM,LOW，默认全部展示且 CRITICAL/HIGH 置顶高亮
+  --fix                    对高置信问题执行最小化修复（默认只出报告）
+  -h, --help               显示本帮助
 
 工作流程
   1. 前置检查：第三方工具可用性（缺失给出安装命令，经用户同意后安装）
   2. 静态检测：review/sast/sca/secret/history/iac/license/sbom
   3. 运行时检测（有 --url）：安全头 + OWASP 只读探测 + JWT/Cookie +
      TLS/SSL 配置 + 端口暴露面；nuclei/zap 可用时追加
-  4. 供应链检测（有 --image）：镜像 CVE/密钥/配置
-  5. 汇总：按 严重级别 × 维度 整理问题清单与修复建议
-  6. --fix 时对高置信问题最小化修复并复扫验证
-  7. 输出报告 test/security/security-check-report.md 与中文摘要
+  4. 汇总：按 严重级别 × 维度 整理问题清单与修复建议
+  5. --fix 时对高置信问题最小化修复并复扫验证
+  6. 输出报告 test/security/security-check-report.md 与中文摘要
 
 产物
   test/security/security-check-report.md  检测报告
@@ -89,7 +75,6 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
   /do-security-check                                  全量静态检测（augmented 模式）
   /do-security-check --type=sca --type=secret         只查依赖漏洞与密钥
   /do-security-check --url=http://staging.example.com 追加运行时检测
-  /do-security-check --image=myapp:latest             追加容器镜像检测
   /do-security-check --mode=auto --fix                仅工具检测并最小化修复
   /do-security-check -h                               显示本帮助
 
@@ -100,13 +85,12 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
     验证: semgrep --version
     用法: semgrep scan --config auto <路径> --json
 
-  trivy（SCA/密钥/IaC/许可证/SBOM/镜像/Git 历史）
+  trivy（SCA/密钥/IaC/许可证/SBOM/Git 历史）
     安装: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
           # macOS: brew install trivy
     验证: trivy --version
     用法: trivy fs --scanners vuln,secret,misconfig <路径> --format json
           trivy repo --scanners secret <路径>     # Git 历史密钥
-          trivy image <镜像名>
           trivy sbom -o sbom.cdx.json <路径>
 
   gitleaks（Git 历史密钥，trivy repo 的备选）
@@ -169,11 +153,7 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
 6. **nuclei**（可用时）：`nuclei -u {URL} -severity critical,high,medium -json`。
 7. **zap**（可用时）：zap-baseline 被动扫描，只取告警不执行主动攻击。
 
-## 四、供应链检测（仅 `--image` 时）
-
-`trivy image --format json {IMAGE}`：OS 包与应用依赖 CVE、镜像内密钥与配置错误。不做 push 等任何变更操作。
-
-## 五、--fix 修复（仅显式传入时）
+## 四、--fix 修复（仅显式传入时）
 
 只对**高置信、低风险**问题自动修复，其余仅给建议：
 
@@ -185,7 +165,7 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
 
 每项修复后**复扫该维度**确认消除；修复一律最小化，不顺手重构。
 
-## 六、报告输出
+## 五、报告输出
 
 写入 `test/security/security-check-report.md`：
 
@@ -193,7 +173,7 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
 # 安全检测报告
 
 检测时间：<YYYY-MM-DD HH:mm>
-范围：<scope>；运行时目标：<url 或 无>；镜像：<image 或 无>；模式：<auto/augmented>
+范围：<scope>；运行时目标：<url 或 无>；模式：<auto/augmented>
 维度：<实际执行列表>；工具版本：semgrep x.y / trivy x.y / ...
 
 ## 总览
@@ -202,7 +182,6 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
 
 ## 一、静态（智能体分析 / SAST / SCA / 密钥 / Git 历史 / IaC / 许可证 / SBOM）
 ## 二、运行时（安全头 / OWASP / JWT / TLS / 端口 / Nuclei / ZAP）
-## 三、供应链（镜像）
 
 ## 结论与修复清单
 - CRITICAL/HIGH 逐项结论；修复文件清单；遗留问题与优先级
@@ -211,7 +190,7 @@ description: 全维度安全检测（静态 + 运行时 + 供应链）。静态�
 
 同时向用户输出中文摘要：各维度问题数（CRITICAL/HIGH 单列明细）、修复项、遗留项。
 
-## 七、注意事项
+## 六、注意事项
 
 - 报告**只引用密钥类型与位置，不回显明文**；发现泄露的密钥提示用户立即轮换。
 - 运行时探测只做只读/低侵入操作，写操作 payload 必须用户确认；目标必须是用户指定的非生产环境。
