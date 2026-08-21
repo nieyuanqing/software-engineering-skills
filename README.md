@@ -473,14 +473,14 @@ software-engineering-skills/
 
 **可选参数**
 
-| 参数 | 说明 |
-|---|---|
-| `--scope` | 静态扫描路径，默认工程根目录（自动排除 .git/node_modules/target 等） |
-| `--type` | 只执行指定维度（review/sast/sca/secret/history/iac/license/sbom/dast/ssl/port/nuclei/zap/all），可多次传入；默认全部静态维度 |
-| `--url` | 运行时检测目标（须为 staging/测试环境），自动启用 dast+ssl |
-| `--mode` | auto=仅工具；augmented=工具 + 智能体深度分析（默认） |
-| `--severity` | 报告过滤级别（默认全部展示，CRITICAL/HIGH 高亮） |
-| `--fix` | 对高置信问题执行最小化修复并复扫（默认只出报告） |
+```
+--scope=<路径>           静态扫描路径，默认工程根目录（自动排除 .git/node_modules/target 等）
+--type=<维度>            只执行指定维度，可多次传入；取值 review/sast/sca/secret/history/iac/license/sbom/dast/ssl/port/nuclei/zap/all，默认全部静态维度
+--url=<地址>             运行时检测目标（须为 staging/测试环境），自动启用 dast+ssl
+--mode=<auto|augmented>  auto=仅工具；augmented=工具 + 智能体深度分析（默认）
+--severity=<级别>        报告过滤级别（默认全部展示，CRITICAL/HIGH 高亮）
+--fix                    对高置信问题执行最小化修复并复扫（默认只出报告）
+```
 
 **工作流程**
 
