@@ -4,6 +4,22 @@
 
 ---
 
+## 安装
+
+在 Claude Code、Codex、Qoder 等智能编程助手中，直接把以下内容发给智能体即可完成安装：
+
+```
+安装 skill：https://github.com/nieyuanqing/software-engineering-skills.git
+```
+
+本机已配置 GitHub SSH key 时（HTTPS 拉取受限或较慢的网络环境推荐），改用 SSH 地址：
+
+```
+安装 skill：git@github.com:nieyuanqing/software-engineering-skills.git
+```
+
+---
+
 ## Skills 列表
 
 | Skill | 说明 |
@@ -427,19 +443,3 @@ software-engineering-skills/
 2. 收集场景信息：场景名、测试类型与优先级、前置条件、测试数据、步骤、结果验证（命令行已给描述则结合工程代码整理，缺项一次性交互补齐）
 3. 按模板写入 `TEST-CASE-NNNN.md` 并输出摘要，提示可用 `/do-test --case=<场景名>` 立即执行
 4. 重建 `test/cases/case-summary.md`：扫描全部历史 CASE，生成摘要索引（名称/关键执行流程/优先级）
-
----
-
-## 安装
-
-在 Claude Code、Codex、Qoder 等智能编程助手中，直接把以下内容发给智能体即可完成安装：
-
-```
-安装 skill：https://github.com/nieyuanqing/software-engineering-skills.git
-```
-
-本机已配置 GitHub SSH key 时（HTTPS 拉取受限或较慢的网络环境推荐），改用 SSH 地址：
-
-```
-安装 skill：git@github.com:nieyuanqing/software-engineering-skills.git
-```
