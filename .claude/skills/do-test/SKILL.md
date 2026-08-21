@@ -80,7 +80,7 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
 
 ### 3.1 用例格式
 
-`test/cases/` 下每个 `.md` 或 `.yaml` 文件是一个测试场景（标准用例由 /new-test-case 生成，命名 `TEST-CASE-{4位编号}.md`）。Markdown 用例为专业模板结构：
+`test/cases/` 下每个 `.md` 或 `.yaml` 文件是一个测试场景（标准用例由 /new-test-case 生成，命名 `TEST-CASE-{4位编号}.md`）。`case-summary.md` 是摘要索引文件（由 /new-test-case 维护），**不作为用例执行**。Markdown 用例为专业模板结构：
 
 - **元信息**：用例编号、测试类型（API / UI(Playwright) / 混合）、优先级、创建时间
 - **前置条件**：执行前必须成立的状态

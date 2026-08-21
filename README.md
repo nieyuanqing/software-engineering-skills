@@ -403,6 +403,8 @@ software-engineering-skills/
 在工程的 `test/cases/` 目录下新增一个测试场景用例文件。一次执行只生成一个文件，
 命名 `TEST-CASE-{4位递增编号}.md`（自动取现有最大编号 +1，从 0001 开始），
 采用专业用例模板，与 /do-test 的用例格式兼容，生成后可直接被 /do-test 执行。
+每次执行后自动重建 `test/cases/case-summary.md` 摘要索引（CASE 名称 / 关键执行流程 /
+优先级，含全部历史 CASE）。
 
 **用例模板结构**
 
@@ -415,6 +417,7 @@ software-engineering-skills/
 ```bash
 /new-test-case 下单流程：登录后可用商品1创建订单并查询订单详情
 /new-test-case                             # 交互询问场景内容后生成
+/new-test-case --update-summary            # 仅根据现有 CASE 重建 case-summary.md
 /new-test-case -h                          # 查看帮助
 ```
 
@@ -423,6 +426,7 @@ software-engineering-skills/
 1. 确定 `test/cases/` 目录（不存在则创建）与下一个 4 位编号
 2. 收集场景信息：场景名、测试类型与优先级、前置条件、测试数据、步骤、结果验证（命令行已给描述则结合工程代码整理，缺项一次性交互补齐）
 3. 按模板写入 `TEST-CASE-NNNN.md` 并输出摘要，提示可用 `/do-test --case=<场景名>` 立即执行
+4. 重建 `test/cases/case-summary.md`：扫描全部历史 CASE，生成摘要索引（名称/关键执行流程/优先级）
 
 ---
 
