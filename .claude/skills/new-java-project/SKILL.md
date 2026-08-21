@@ -1,6 +1,6 @@
 ---
 name: new-java-project
-description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：deploy.sh、apply-ssl.sh、nginx vhost（dev/test/prod 三套）、supervisord 配置、env.example、specs/deployment.md。所有产物遵循共享主机部署通用规范（统一目录、健康检查、日志格式、supervisord 安全操作规范）。当用户要求"初始化部署"、"创建部署脚本"、"配置 nginx/supervisor"、"新建 Java 工程部署"时触发。支持 /new-java-project -h 查看帮助。
+description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：deploy.sh、apply-ssl.sh、nginx vhost（dev/test/prod 三套）、supervisord 配置、env.example、specs/deployment.md、标准 .gitignore（含 env 与 SQL 文件忽略）。所有产物遵循共享主机部署通用规范（统一目录、健康检查、日志格式、supervisord 安全操作规范）。当用户要求"初始化部署"、"创建部署脚本"、"配置 nginx/supervisor"、"新建 Java 工程部署"时触发。支持 /new-java-project -h 查看帮助。
 ---
 
 # new-java-project
@@ -152,6 +152,7 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 ```
 scripts/deploy.sh
 scripts/apply-ssl.sh
+.gitignore
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf
 deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf
@@ -195,6 +196,7 @@ specs/baseline-versions.md
 |---|---|
 | `scripts/deploy.sh` | `templates/scripts/deploy.sh` |
 | `scripts/apply-ssl.sh` | `templates/scripts/apply-ssl.sh` |
+| `.gitignore` | `templates/gitignore` |
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf` | `templates/deploy-conf/nginx/vhosts/service.dev.conf` |
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.test.conf` | `templates/deploy-conf/nginx/vhosts/service.test.conf` |
 | `deploy-conf/nginx/vhosts/<SERVICE_NAME>.prod.conf` | `templates/deploy-conf/nginx/vhosts/service.prod.conf` |
@@ -207,6 +209,12 @@ specs/baseline-versions.md
 | `src/backend/<SERVICE_NAME>/src/main/resources/application-prod.yml` | `templates/src/main/resources/application-prod.yml` |
 | `specs/deployment.md` | `specs/deployment-template.md` |
 | `specs/baseline-versions.md` | `specs/baseline-versions-template.md` |
+
+### `.gitignore` 生成规则
+
+- 目标工程**没有** `.gitignore` → 按 `templates/gitignore` 模板整体生成（含 Java/Maven、IDE、日志、**env 环境变量文件**、**SQL/数据库文件**、前端与构建产物等条目）。
+- 目标工程**已有** `.gitignore` → 不覆盖，仅将模板中缺失的条目合并追加（重点确保：`.env` / `.env.*` / `*.env` / `env.local` / `application-local.yml` 等 env 文件，`*.sql` / `*.dump` / `*.sqlite` / `*.db` 等 SQL/数据库文件），已存在的条目不重复添加。
+- 注意：`deploy-conf/env.dev|test|prod` 是占位符模板，属于应提交文件，**不得**加入忽略清单。
 
 ### `HAS_WEB=false` 时的处理
 

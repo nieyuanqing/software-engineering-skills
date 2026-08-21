@@ -1,0 +1,54 @@
+# ── Java / Maven ─────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+
+# ── IDE / 编辑器 ─────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── 日志 ─────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── 环境变量文件（含密码/密钥等敏感信息，禁止提交）──────────
+# 说明：deploy-conf/env.dev|test|prod 是占位符模板，允许提交；
+#       真实环境值请放在部署主机的 deploy-conf/ 下，不入库。
+.env
+.env.*
+*.env
+env.local
+*.local
+application-local.yml
+
+# ── SQL / 数据库文件（导出/备份常含数据与敏感信息）──────────
+*.sql
+*.dump
+*.sqlite
+*.db
+# 如需版本化管理迁移 SQL，按实际目录放开例外，例如：
+# !src/**/db/migration/*.sql
+
+# ── 前端（HAS_WEB=true 时适用）──────────────────────────────
+node_modules/
+dist/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+
+# ── 构建/打包产物 ────────────────────────────────────────────
+*.zip
+*.tar.gz
+mobile-apps/
+
+# ── 测试与扫描产物（按需提交报告时可放开）────────────────────
+test/.tmp-*
+test/security/sbom.cdx.json
