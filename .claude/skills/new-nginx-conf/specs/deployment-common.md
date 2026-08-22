@@ -113,7 +113,7 @@ ss -tln | grep -E ':(<port1>|<port2>)\b'               # 目标端口是否空�
 
 **规则**：
 
-1. 每个服务必须提供一个健康检查端点，**统一路径格式为 `/api/<service-name>/health`**（如 myservice 对应 `/api/myservice/health`）——这是本机所有项目共同遵守的规范，不是各项目自选路径；Spring Boot 项目通过 `management.endpoints.web.base-path=/api/<service-name>` 配置 Actuator 实现，不使用 Actuator 默认的 `/actuator/health`。健康检查端点只对内网/本机可达，不通过共享 nginx 对外转发
+1. 每个服务必须提供一个健康检查端点，**统一路径格式为 `/api/<service-name>/health`**（如 myservice 对应 `/api/myservice/health`）——这是本机所有项目共同遵守的规范，不是各项目自选路径；Spring Boot 项目通过 `management.endpoints.web.base-path=/api/<service-name>` 配置 Actuator 实现，不使用 Actuator 默认的 `/actuator/health`。健康检查端点只对内网/本机可达，不通过共享 nginx 对外转发。服务对外 API 统一走服务名前缀路径 `/<service-name>/api/`（nginx 剥离前缀后转发到应用内 `/api/`），健康检查经 nginx 即 `/<service-name>/api/health`
 
 2. 部署脚本在启动/重启进程后，必须轮询这个端点，**最长等待 60 秒**，检测成功后才能继续执行后续步骤（安装/重载 nginx、打印"部署成功"）
 

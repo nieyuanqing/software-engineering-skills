@@ -964,9 +964,9 @@ SUMMARY_HOST_PREFIX=""
 echo
 echo "══════════════════════ 部署摘要 ══════════════════════"
 echo "  ▍访问地址（本次环境: ${DEPLOY_ENV:-dev}）"
-echo "    dev   http://$SUMMARY_HOST:${NGINX_PORT}/api/<SERVICE_NAME>/health"
-echo "    test  https://<TEST_DOMAIN>:${NGINX_PORT}/api/<SERVICE_NAME>/health"
-echo "    prod  https://<PROD_DOMAIN>:${NGINX_PORT}/api/<SERVICE_NAME>/health"
+echo "    dev   http://$SUMMARY_HOST:${NGINX_PORT}/<SERVICE_NAME>/api/health"
+echo "    test  https://<TEST_DOMAIN>:${NGINX_PORT}/<SERVICE_NAME>/api/health"
+echo "    prod  https://<PROD_DOMAIN>:${NGINX_PORT}/<SERVICE_NAME>/api/health"
 echo
 echo "  ▍应用位置"
 if [ "$DEPLOY_BACKEND" = true ]; then

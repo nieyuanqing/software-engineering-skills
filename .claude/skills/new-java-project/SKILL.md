@@ -30,9 +30,9 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
   --db-name=NAME          数据库名（如 --db-name=my-service）
   --test-domain=DOMAIN    test 环境域名（如 --test-domain=svc.test.example.com）
   --prod-domain=DOMAIN    prod 环境域名（如 --prod-domain=svc.example.com）
-  --has-web=true|false    是否有前端静态资源（如 --has-web=false）
-  --web-path=PATH         前端路径前缀，默认 /web/（如 --web-path=/admin/）
-  --api-prefix=PREFIX     API 路径前缀，默认 /api/（如 --api-prefix=/v1/）
+  --has-web=true|false    是否有前端静态资源，默认 true（如 --has-web=false）
+  --web-path=PATH         前端路径前缀，默认 /<SERVICE_NAME>/web/（如 --web-path=/admin/）
+  --api-prefix=PREFIX     API 路径前缀，默认 /<SERVICE_NAME>/api/（如 --api-prefix=/v1/）
   --jdk-version=N         JDK 基线版本，默认 21（如 --jdk-version=21）
   --pg-version=N          PostgreSQL 基线版本，默认 17（如 --pg-version=17）
   -h, --help              显示本帮助
@@ -56,7 +56,7 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 
   所有产物遵循随本 skill 分发的 specs/deployment-common.md 跨项目通用规范：
     - 统一目录约定：/opt/soft/apps/<name>/、/data/logs/apps/<name>/
-    - 健康检查端点：/api/<name>/health（Spring Boot Actuator，startsecs=10，健康检查最长等待 420s）
+    - 健康检查端点：应用内 /api/<name>/health，经 nginx 为 /<name>/api/health（Spring Boot Actuator，startsecs=10，健康检查最长等待 420s）
     - 部署日志格式：[YYYY-MM-DD HH:MM:SS] [deploy.sh] <message>，阶段日志：Phase N/M
     - supervisord 配置由 deploy.sh 在部署时 inline 生成（不从静态 ini 文件复制）
     - 支持 --remote USER@HOST 远程部署（本地构建，rsync 上传，SSH 远程重启）
@@ -108,9 +108,9 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 | `--db-name=NAME` | `DB_NAME` |
 | `--test-domain=DOMAIN` | `TEST_DOMAIN` |
 | `--prod-domain=DOMAIN` | `PROD_DOMAIN` |
-| `--has-web=true\|false` | `HAS_WEB` |
-| `--web-path=PATH` | `WEB_PATH`（默认 `/web/`） |
-| `--api-prefix=PREFIX` | `API_PATH_PREFIX`（默认 `/api/`） |
+| `--has-web=true\|false` | `HAS_WEB`（默认 `true`） |
+| `--web-path=PATH` | `WEB_PATH`（默认 `/<SERVICE_NAME>/web/`） |
+| `--api-prefix=PREFIX` | `API_PATH_PREFIX`（默认 `/<SERVICE_NAME>/api/`） |
 | `--jdk-version=N` | `JDK_VERSION`（默认 `21`） |
 | `--pg-version=N` | `PG_VERSION`（默认 `17`） |
 
@@ -133,9 +133,9 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
 | `DB_NAME` | 数据库名 | 与 `SERVICE_NAME` 相同 |
 | `TEST_DOMAIN` | test 环境域名 | 无 |
 | `PROD_DOMAIN` | prod 环境域名 | 无 |
-| `HAS_WEB` | 是否有前端静态资源（`true`/`false`） | `false` |
-| `WEB_PATH` | 前端路径前缀（`HAS_WEB=true` 时有效） | `/web/` |
-| `API_PATH_PREFIX` | nginx 反代 API 路径前缀 | `/api/` |
+| `HAS_WEB` | 是否有前端静态资源（`true`/`false`） | `true` |
+| `WEB_PATH` | 前端路径前缀（`HAS_WEB=true` 时有效） | `/<SERVICE_NAME>/web/` |
+| `API_PATH_PREFIX` | nginx 反代 API 路径前缀 | `/<SERVICE_NAME>/api/` |
 | `JDK_VERSION` | JDK 基线版本 | `21` |
 | `PG_VERSION` | PostgreSQL 基线版本 | `17` |
 
@@ -219,12 +219,12 @@ specs/baseline-versions.md
 ### `HAS_WEB=false` 时的处理
 
 如果 `HAS_WEB=false`：
-1. 在生成的三份 nginx 配置（dev/test/prod）中删除 `# ── 前端静态资源` 注释块及其下方的整个 `location /web/` 块。
+1. 在生成的三份 nginx 配置（dev/test/prod）中删除 `# ── 前端静态资源` 注释块及其下方的整个 `location /<SERVICE_NAME>/web/` 块。
 2. 在 `deploy.sh` 的 `parse_deploy_args()` 中把 `DEPLOY_WEB` 的初始值改为 `false`，并在 usage 说明中注明"本服务无前端，--target web 和 --target all 不适用"。
 
 ### 自定义 API 路径前缀
 
-如果 `API_PATH_PREFIX` 不是 `/api/`，在三份 nginx 配置的 `location /api/` 块和 `proxy_pass` 行中统一替换为指定路径前缀。
+如果 `API_PATH_PREFIX` 不是默认的 `/<SERVICE_NAME>/api/`，在三份 nginx 配置的 `location /<SERVICE_NAME>/api/` 块和 `proxy_pass` 行中统一替换为指定路径前缀。
 
 ---
 

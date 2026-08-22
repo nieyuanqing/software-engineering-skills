@@ -149,7 +149,7 @@ software-engineering-skills/
 
 **所有产物遵循的通用规范**（见 `specs/deployment-common.md`）：
 - 目录约定：`/opt/soft/apps/<name>/`、`/data/logs/apps/<name>/`
-- 健康检查端点：`/api/<name>/health`（Spring Boot Actuator，`startsecs=10`，最长等待 420s）
+- 健康检查端点：应用内 `/api/<name>/health`，经 nginx 为 `/<name>/api/health`（Spring Boot Actuator，`startsecs=10`，最长等待 420s）
 - 部署日志格式：`[YYYY-MM-DD HH:MM:SS] [deploy.sh] ...`，阶段编号：`Phase N/M`
 - 共享主机安全规范：不自动 `systemctl start supervisor`，不随意改动其他项目配置
 

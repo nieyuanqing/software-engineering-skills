@@ -27,7 +27,7 @@
    │
    ▼
 nginx（对外监听 <NGINX_PORT>）
-   │  反向代理 /api/；/web/ 直接从磁盘提供静态资源（如有前端）
+   │  反向代理 /<SERVICE_NAME>/api/；/<SERVICE_NAME>/web/ 直接从磁盘提供静态资源（如有前端）
    ▼
 Spring Boot 应用（127.0.0.1:<APP_PORT>，只绑定本机地址，不直接对外）
    │
