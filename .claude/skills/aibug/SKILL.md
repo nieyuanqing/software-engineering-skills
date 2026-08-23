@@ -31,7 +31,7 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
   1. POST {host}/aibug/api/auth/login          登录，获取 token
   2. GET  {host}/aibug/api/bugs/next           获取下一个 PENDING Bug
   3. PUT  {host}/aibug/api/bugs/{id}/status    标记为 IN_PROGRESS
-  4. 分析 Bug 内容，定位并修复代码
+  4. 委托子智能体分析 Bug 并修复（独立上下文，主循环只收 ≤5 行结果）
   5. PUT  {host}/aibug/api/bugs/{id}/status    标记为 FIXED 或 FAILED
   6. 循环回到第 2 步，直到无更多 PENDING Bug
 
@@ -118,6 +118,21 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 - `{HOST}`、`{PROJECT_ID}`、`{id}` 均替换为真实值；token 一律显示为 `***`，禁止明文输出。
 - 输出命令后紧跟一行执行结果摘要（如 HTTP 状态与返回的 `status`/`error` 字段值）。
 
+### 上下文与权重控制（全程必做）
+
+**上下文增长优化**（防止长循环撑爆上下文窗口）：
+
+1. **子智能体隔离**：3.3 的分析与修复默认委托给子智能体（Agent 工具）执行——子智能体拥有独立上下文，定位/阅读/修改代码的完整过程不进入主循环；主循环只接收 ≤5 行的结构化结果。
+2. **响应瘦身**：所有 API 响应只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`error` 字段；禁止把完整 JSON 原文粘进对话。
+3. **台账式记录**：主循环只维护一行式台账 `#<id> → FIXED/FAILED（一句话原因）`，不保留分析细节。
+4. **定期压缩**：每处理完 5 个 Bug，或感知上下文占用约 60% 时，执行一次 `/compact`，并明确要求保留：连接参数与 token、台账表、当前未完成 Bug 的状态。
+
+**当前 Bug 信息权重优先**（当前需求/bug 信息高于历史上下文）：
+
+1. **Bug 卡先行**：开始处理每个 Bug 时，先输出"当前 Bug 卡"（`#id / content / fileUrls / 目标状态`）；该 Bug 的处理全程以卡内信息为唯一事实来源。
+2. **禁止串味**：当前 Bug 卡与之前 Bug 的结论、历史对话、经验假设冲突时，一律以当前 Bug 卡为准；不复用上一个 Bug 的定位结果、根因判断或修复方案。
+3. **干净上下文**：子智能体 prompt 只包含当前 Bug 卡 + 工程路径 + 修复约束，不携带任何历史 Bug 信息，天然保证当前需求获得最高权重。
+
 ### 3.1 获取下一个 Bug
 
 ```bash
@@ -160,14 +175,24 @@ curl -s "{HOST}/aibug/api/bugs/{id}" \
 
 - 响应中 `status` 必须为 `IN_PROGRESS`，否则重试一次；仍不一致则**停止处理该 Bug**，向用户报告不一致详情。
 
-### 3.3 分析并修复 Bug
+### 3.3 分析并修复 Bug（子智能体隔离）
 
-根据 Bug 的 `content` 字段描述：
+**默认方式：委托子智能体**（Agent 工具，subagent_type 用 general-purpose），prompt 只包含：
 
-1. **理解需求**：阅读 `content`，明确需要修改什么。
-2. **查看附件**：如果 `fileUrls` 不为空，用 Read 工具读取图片（URL = `{HOST}{fileUrls}`），作为辅助参考。
-3. **定位代码**：根据描述在当前工程中找到需要修改的文件和位置。
-4. **执行修复**：用 Edit / Write 工具修改代码，确保修改范围最小、不引入新问题。
+- 当前 Bug 卡：`#id`、`content`（原文）、附件完整地址（`{HOST}{fileUrls}`，如有）
+- 工程根路径，以及约束：最小化修复、只改代码不执行 git commit、无法修复时明确说明原因
+
+要求子智能体以下列固定格式返回（≤5 行），主循环只将该结果记入台账，不追问细节：
+
+```
+结果: FIXED | FAILED
+修改文件: <逐行列出；FAILED 时写 无>
+说明: <一句话根因或失败原因>
+```
+
+子智能体内部执行：理解 `content` → 查看附件图片（如有）→ 定位代码 → Edit/Write 最小化修复。
+
+**回退方式**（无法使用子智能体时）：主循环内联执行上述四步，但必须遵守"上下文与权重控制"——响应与文件内容只截取相关片段，不把大段原文粘进对话。
 
 ### 3.4 更新 Bug 状态
 
