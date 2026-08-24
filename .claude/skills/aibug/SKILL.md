@@ -31,7 +31,8 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
   1. POST {host}/aibug/api/auth/login          登录，获取 token
   2. GET  {host}/aibug/api/bugs/next           获取下一个 PENDING Bug
   3. PUT  {host}/aibug/api/bugs/{id}/status    标记为 IN_PROGRESS
-  4. 委托子智能体分析 Bug 并修复（独立上下文，主循环只收 ≤5 行结果）
+  4. 委托子智能体分析 Bug 并修复；每修复一个即刻验证（编译/构建/复测），
+     验证通过才可标记 FIXED，禁止最后统一验证
   5. PUT  {host}/aibug/api/bugs/{id}/status    标记为 FIXED 或 FAILED
   6. 循环回到第 2 步，直到无更多 PENDING Bug
 
@@ -180,21 +181,24 @@ curl -s "{HOST}/aibug/api/bugs/{id}" \
 **默认方式：委托子智能体**（Agent 工具，subagent_type 用 general-purpose），prompt 只包含：
 
 - 当前 Bug 卡：`#id`、`content`（原文）、附件完整地址（`{HOST}{fileUrls}`，如有）
-- 工程根路径，以及约束：最小化修复、只改代码不执行 git commit、无法修复时明确说明原因
+- 工程根路径，以及约束：最小化修复、只改代码不执行 git commit、**修复后必须验证**、无法修复时明确说明原因
 
 要求子智能体以下列固定格式返回（≤5 行），主循环只将该结果记入台账，不追问细节：
 
 ```
 结果: FIXED | FAILED
 修改文件: <逐行列出；FAILED 时写 无>
+验证: <验证方式> → 通过 | 失败
 说明: <一句话根因或失败原因>
 ```
 
-子智能体内部执行：理解 `content` → 查看附件图片（如有）→ 定位代码 → Edit/Write 最小化修复。
+子智能体内部执行：理解 `content` → 查看附件图片（如有）→ 定位代码 → Edit/Write 最小化修复 → **即刻验证（必做）**：修复完成后**在同一轮内立即验证**，验证通过才返回结果，然后才进入 3.4 更新状态、再取下一个 Bug；**禁止**把验证推迟到所有 Bug 修复完后统一做。验证方式按工程类型选最低成本——Java 工程 `mvn -q -DskipTests compile` 编译通过；前端工程构建或 lint 通过；Bug 指向具体接口时用 curl 复测该接口行为符合描述预期；工程有相关测试则运行对应测试。验证未通过则继续修复直至通过，仍无法通过则如实报告 `验证: 失败`，不得虚报 FIXED。
 
 **回退方式**（无法使用子智能体时）：主循环内联执行上述四步，但必须遵守"上下文与权重控制"——响应与文件内容只截取相关片段，不把大段原文粘进对话。
 
 ### 3.4 更新 Bug 状态
+
+**标记 FIXED 的前提**：该 Bug 的验证已在**本轮修复后即刻完成**（不是全部修完后统一验证），且子智能体结果同时满足 `结果: FIXED` 与 `验证: 通过`。若 `验证: 失败`，退回子智能体追加修复一轮（携带失败现象），复验仍失败则标记 `FAILED`，failReason 写明"修复后验证未通过：<验证方式与失败现象>"。
 
 **修复成功** → 标记为 `FIXED`：
 
