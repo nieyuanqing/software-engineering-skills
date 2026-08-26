@@ -141,10 +141,12 @@ software-engineering-skills/
 | `specs/baseline-versions.md` | 基线版本规范（JDK、PostgreSQL、Spring Boot 等） |
 
 **deploy.sh 能力**（见下方 [`/new-deploy`](#new-deploy) 节的详细说明）：
-- `-t/--target all|backend|web|ssl`，`-e/--env dev|test|prod`
+- `-t/--target all|backend|web|ssl|android|db`（支持逗号分隔多值，如 `-t backend,web`），`-e/--env dev|test|prod`
+- `-s/--services NAME[,NAME...]` 一次部署多个服务（各自独立的服务目录/日志/supervisor 进程）
 - `-r/--remote USER@HOST` 远程部署（本地构建，rsync 上传，SSH 重启）
 - `--target ssl` 安装 nginx（apt）+ SSL 证书配置
 - supervisord 配置在部署时 inline 生成，Spring 环境通过 `.env` 中的 `SPRING_PROFILES_ACTIVE` 传递
+- mvn/gradle/npm 构建日志静默落盘 `./runtime/`，涉及主机/数据库的日志带"服务名（主机/数据库，本机/远程）"标签
 - Phase N/M 阶段日志，`[STATUS] OK/ERROR` 机器可读输出，420s 健康检查
 
 **所有产物遵循的通用规范**（见 `specs/deployment-common.md`）：
@@ -183,13 +185,17 @@ software-engineering-skills/
 
 | 能力 | 说明 |
 |---|---|
-| `--target all\|backend\|web\|ssl` | 部署目标（`-t` 简写） |
+| `--target all\|backend\|web\|ssl\|android\|db` | 部署目标（`-t` 简写）；支持逗号分隔多值（如 `-t backend,web`），按书写顺序叠加 |
+| `--services NAME[,NAME...]` | 服务名列表（`-s` 简写）：依次部署多个服务，每个对应 `src/backend/<name>`，独立的服务目录/日志/supervisor 进程；单值等价切换服务名 |
 | `--env dev\|test\|prod` | 目标环境（`-e` 简写），默认 `dev` |
 | `--remote USER@HOST` | 远程部署（`-r` 简写）：本地 Maven 构建，rsync 上传 JAR，SSH 远程重启 |
 | `--target ssl` | 完整 nginx 安装（apt）+ 主配置 + 站点配置；仅支持 `test\|prod` |
+| `--target db` / `--db` | pg_dump 本地库 → rsync → 远程 drop+create+restore（可叠加在 backend 后） |
 | 自动 nginx 同步 | backend 部署后自动同步站点配置并 reload（目标已装 nginx 时） |
 | inline supervisord 配置 | 部署时写入 `/etc/supervisor/conf.d/<name>.conf`，不依赖静态 ini 文件 |
 | env 文件按环境选择 | 自动选取 `.env` / `.env.test` / `.env.prod`（来自 `src/backend/<name>/`） |
+| 构建日志静默落盘 | mvn/gradle/npm 过程日志不显示在终端，写入 `./runtime/deploy-*-<时间戳>.log`（失败时打印末尾 120 行） |
+| 主机/数据库日志标签 | 涉及主机/数据库的日志统一带 `<name>（主机\|数据库，本机\|远程）` 标签，便于按服务定位 |
 | Phase N/M 日志 | 编号阶段日志，`[STATUS] OK/ERROR` 机器可读输出行 |
 | 健康检查 | `http://127.0.0.1:<APP_PORT>/api/<name>/health`，最长等待 420s |
 | 版本化 JAR + 软链接 | `<name>-<version>.jar` + `<name>.jar` 软链接，支持手动回滚 |

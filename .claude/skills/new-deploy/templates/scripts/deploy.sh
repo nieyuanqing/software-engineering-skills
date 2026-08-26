@@ -1,5 +1,5 @@
 #!/bin/bash
-# <SERVICE_NAME> 部署脚本
+# ${SERVICE_NAME} 部署脚本
 # 支持本地和远程（SSH）部署，后端 JAR 由 supervisord 管理，通过 nginx 反向代理对外访问。
 # 规范参考：specs/deployment.md（本工程）、specs/deployment-common.md（跨项目通用）
 set -euo pipefail
@@ -42,10 +42,15 @@ Usage:
 
 Options:
   -t, --target all|backend|web|ssl|android|db
-                  部署目标。默认: all
+                  部署目标。默认: all。支持逗号分隔多值（如 -t backend,web），
+                  按书写顺序叠加；出现 all 时先重置为默认组合（backend+web）。
                   android 构建 Android APK：不指定 --env 时三套环境全构；
                   指定 --env dev|test|prod 时只构建该环境。
                   db 将本地 dev 数据库同步到远程（需 --remote；破坏性：drop+recreate）。
+  -s, --services NAME[,NAME...]
+                  服务名列表（逗号分隔）：依次部署多个服务。每个服务对应
+                  src/backend/<name> 模块，独立的服务目录、日志目录与
+                  supervisor 进程；单值时等价于切换当前服务名。
   -e, --env dev|test|prod
                   目标环境（影响 nginx 配置、SSL 证书和 env 文件选择）。默认: dev
                   android target：dev→assembleDevRelease，test→assembleStagingRelease，
@@ -71,19 +76,22 @@ Options:
   all       backend + web（依次执行），ssl/android/db 须单独触发
 
 数据库同步说明:
-  源库凭据从 src/backend/<SERVICE_NAME>/.env 读取（DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD）。
+  源库凭据从 src/backend/${SERVICE_NAME}/.env 读取（DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD）。
   --target db            停止服务 → 同步 → 恢复服务（仅数据库，不部署代码）
   --target backend --db  Maven 构建 → 停止服务 → 同步库 → 上传 JAR → 重启服务
 
 环境说明:
-  dev   无域名，HTTP，IP+端口访问（deploy-conf/nginx/vhosts/<SERVICE_NAME>.dev.conf）
+  dev   无域名，HTTP，IP+端口访问（deploy-conf/nginx/vhosts/${SERVICE_NAME}.dev.conf）
   test  独立机器，测试域名 + HTTPS（需先申请证书）
   prod  独立机器，生产域名 + HTTPS（需先申请证书）
 
 示例:
   bash scripts/deploy.sh
   bash scripts/deploy.sh --target backend
+  bash scripts/deploy.sh -t backend,web --env test --remote root@192.168.1.100
   bash scripts/deploy.sh --target backend --env test --remote root@192.168.1.100
+  bash scripts/deploy.sh -s order-service,user-service -t backend --remote root@192.168.1.100
+  bash scripts/deploy.sh -s order-service,user-service -t backend,web --env test --remote root@192.168.1.100
   bash scripts/deploy.sh --target ssl --env test --remote root@192.168.1.100
   bash scripts/deploy.sh --target ssl --env prod --remote root@192.168.1.100
   bash scripts/deploy.sh --target android
@@ -103,7 +111,7 @@ require_command() {
 
 wait_service_ready() {
     local timeout="${SERVICE_READY_TIMEOUT:-420}"
-    local url="http://127.0.0.1:${APP_PORT}/api/<SERVICE_NAME>/health"
+    local url="http://127.0.0.1:${APP_PORT}/api/${SERVICE_NAME}/health"
     local started_at elapsed http_code
 
     started_at="$(date +%s)"
@@ -116,7 +124,7 @@ wait_service_ready() {
             return 0
         fi
         if [ "$elapsed" -ge "$timeout" ]; then
-            supervisorctl -c "$SUPERVISOR_CONF" status "<SERVICE_NAME>" || true
+            supervisorctl -c "$SUPERVISOR_CONF" status "${SERVICE_NAME}" || true
             tail -n 120 "$LOG_DIR/supervisord.log" || true
             fail "服务启动超时，健康检查未通过: $url（最后 HTTP $http_code）"
         fi
@@ -127,7 +135,7 @@ wait_service_ready() {
 
 remote_wait_service_ready() {
     local timeout="${SERVICE_READY_TIMEOUT:-420}"
-    local health_path="/api/<SERVICE_NAME>/health"
+    local health_path="/api/${SERVICE_NAME}/health"
     local started_at elapsed http_code
 
     started_at="$(date +%s)"
@@ -140,7 +148,7 @@ remote_wait_service_ready() {
             return 0
         fi
         if [ "$elapsed" -ge "$timeout" ]; then
-            remote_exec "supervisorctl -c $SUPERVISOR_CONF status <SERVICE_NAME>" || true
+            remote_exec "supervisorctl -c $SUPERVISOR_CONF status ${SERVICE_NAME}" || true
             fail "远程服务启动超时: $REMOTE_HOST http://127.0.0.1:${APP_PORT}$health_path（最后 HTTP $http_code）"
         fi
         log "检测中: 远程服务尚未就绪（已等待 ${elapsed}s / ${timeout}s，HTTP $http_code）"
@@ -153,7 +161,7 @@ remote_wait_service_ready() {
 read_backend_version() {
     local pom="$1"
     awk '
-        /<artifactId><SERVICE_NAME><\/artifactId>/ { found=1; next }
+        /<artifactId>${SERVICE_NAME}<\/artifactId>/ { found=1; next }
         found && /<version>/ {
             gsub(/.*<version>|<\/version>.*/, "", $0)
             print $0
@@ -163,7 +171,7 @@ read_backend_version() {
 }
 
 get_jar_path() {
-    find "$BACKEND_DIR/target" -maxdepth 1 -type f -name "<SERVICE_NAME>-*.jar" \
+    find "$BACKEND_DIR/target" -maxdepth 1 -type f -name "${SERVICE_NAME}-*.jar" \
         ! -name "*original*" ! -name "*sources*" ! -name "*javadoc*" | head -1
 }
 
@@ -172,12 +180,12 @@ get_jar_path() {
 write_supervisor_conf() {
     local app_dir="$APP_DIR"
     local log_dir="$LOG_DIR"
-    local conf_file="$SUPERVISOR_CONF_DIR/<SERVICE_NAME>.conf"
+    local conf_file="$SUPERVISOR_CONF_DIR/${SERVICE_NAME}.conf"
 
     mkdir -p "$log_dir" "$SUPERVISOR_CONF_DIR"
     cat > "$conf_file" <<EOF
-[program:<SERVICE_NAME>]
-command=/bin/bash -c "[ -f $app_dir/.env ] && { set -a; . $app_dir/.env; set +a; }; exec \${JAVA_EXEC:-/usr/bin/java} -jar $app_dir/<SERVICE_NAME>.jar"
+[program:${SERVICE_NAME}]
+command=/bin/bash -c "[ -f $app_dir/.env ] && { set -a; . $app_dir/.env; set +a; }; exec \${JAVA_EXEC:-/usr/bin/java} -jar $app_dir/${SERVICE_NAME}.jar"
 directory=$app_dir
 autostart=true
 autorestart=true
@@ -210,13 +218,13 @@ resolve_env_file() {
 deploy_service_jar() {
     local jar_file
     jar_file="$(get_jar_path)"
-    [ -n "$jar_file" ] && [ -f "$jar_file" ] || fail "未找到 <SERVICE_NAME> JAR（target/ 下无匹配文件）"
-    local target_jar="$APP_DIR/<SERVICE_NAME>-$BACKEND_VERSION.jar"
+    [ -n "$jar_file" ] && [ -f "$jar_file" ] || fail "未找到 ${SERVICE_NAME} JAR（target/ 下无匹配文件）"
+    local target_jar="$APP_DIR/${SERVICE_NAME}-$BACKEND_VERSION.jar"
 
     mkdir -p "$APP_DIR"
     cp -f "$jar_file" "$target_jar.tmp"
     mv -f "$target_jar.tmp" "$target_jar"
-    ln -sfn "<SERVICE_NAME>-$BACKEND_VERSION.jar" "$APP_DIR/<SERVICE_NAME>.jar"
+    ln -sfn "${SERVICE_NAME}-$BACKEND_VERSION.jar" "$APP_DIR/${SERVICE_NAME}.jar"
 
     local env_file
     env_file="$(resolve_env_file)"
@@ -227,15 +235,15 @@ deploy_service_jar() {
         log "警告: 未找到 env 文件: $env_file"
     fi
 
-    log "写入 supervisor 配置: $SUPERVISOR_CONF_DIR/<SERVICE_NAME>.conf"
+    log "写入 supervisor 配置: $SUPERVISOR_CONF_DIR/${SERVICE_NAME}.conf"
     write_supervisor_conf
     log "已部署 JAR: $target_jar"
 }
 
 restart_service() {
-    log "重启 supervisor 服务: <SERVICE_NAME>"
-    if ! supervisorctl -c "$SUPERVISOR_CONF" restart "<SERVICE_NAME>"; then
-        supervisorctl -c "$SUPERVISOR_CONF" start "<SERVICE_NAME>"
+    log "重启 supervisor 服务: ${SERVICE_NAME}"
+    if ! supervisorctl -c "$SUPERVISOR_CONF" restart "${SERVICE_NAME}"; then
+        supervisorctl -c "$SUPERVISOR_CONF" start "${SERVICE_NAME}"
     fi
 }
 
@@ -248,13 +256,13 @@ remote_exec() {
 remote_deploy_service_jar() {
     local jar_file
     jar_file="$(get_jar_path)"
-    [ -n "$jar_file" ] && [ -f "$jar_file" ] || fail "未找到 <SERVICE_NAME> JAR（target/ 下无匹配文件）"
-    local target_jar="$APP_DIR/<SERVICE_NAME>-$BACKEND_VERSION.jar"
+    [ -n "$jar_file" ] && [ -f "$jar_file" ] || fail "未找到 ${SERVICE_NAME} JAR（target/ 下无匹配文件）"
+    local target_jar="$APP_DIR/${SERVICE_NAME}-$BACKEND_VERSION.jar"
 
-    log "上传 JAR 到 $REMOTE_HOST:$target_jar"
+    log "上传 JAR: $HOST_TAG → $REMOTE_HOST:$target_jar"
     remote_exec "mkdir -p $APP_DIR"
     rsync -az --progress "$jar_file" "$REMOTE_HOST:$target_jar.tmp"
-    remote_exec "mv -f $target_jar.tmp $target_jar && ln -sfn <SERVICE_NAME>-$BACKEND_VERSION.jar $APP_DIR/<SERVICE_NAME>.jar"
+    remote_exec "mv -f $target_jar.tmp $target_jar && ln -sfn ${SERVICE_NAME}-$BACKEND_VERSION.jar $APP_DIR/${SERVICE_NAME}.jar"
 
     local env_file
     env_file="$(resolve_env_file)"
@@ -267,12 +275,12 @@ remote_deploy_service_jar() {
 
     local app_dir="$APP_DIR"
     local log_dir="$LOG_DIR"
-    local conf_file="$SUPERVISOR_CONF_DIR/<SERVICE_NAME>.conf"
-    log "写入远程 supervisor 配置: $REMOTE_HOST:$conf_file"
+    local conf_file="$SUPERVISOR_CONF_DIR/${SERVICE_NAME}.conf"
+    log "写入远程 supervisor 配置: $HOST_TAG → $REMOTE_HOST:$conf_file"
     remote_exec "mkdir -p $log_dir $SUPERVISOR_CONF_DIR"
     remote_exec "cat > $conf_file" <<EOF
-[program:<SERVICE_NAME>]
-command=/bin/bash -c "[ -f $app_dir/.env ] && { set -a; . $app_dir/.env; set +a; }; exec \${JAVA_EXEC:-/usr/bin/java} -jar $app_dir/<SERVICE_NAME>.jar"
+[program:${SERVICE_NAME}]
+command=/bin/bash -c "[ -f $app_dir/.env ] && { set -a; . $app_dir/.env; set +a; }; exec \${JAVA_EXEC:-/usr/bin/java} -jar $app_dir/${SERVICE_NAME}.jar"
 directory=$app_dir
 autostart=true
 autorestart=true
@@ -287,14 +295,14 @@ stderr_logfile_maxbytes=10MB
 stderr_logfile_backups=30
 stderr_capture_maxbytes=1MB
 EOF
-    log "已上传 JAR: $REMOTE_HOST:$target_jar"
+    log "已上传 JAR: $HOST_TAG → $REMOTE_HOST:$target_jar"
 }
 
 remote_restart_service() {
-    log "远程重启 supervisor 服务: <SERVICE_NAME>"
+    log "远程重启 supervisor 服务: $HOST_TAG"
     remote_exec "supervisorctl -c $SUPERVISOR_CONF reread && supervisorctl -c $SUPERVISOR_CONF update"
-    if ! remote_exec "supervisorctl -c $SUPERVISOR_CONF restart <SERVICE_NAME>"; then
-        remote_exec "supervisorctl -c $SUPERVISOR_CONF start <SERVICE_NAME>"
+    if ! remote_exec "supervisorctl -c $SUPERVISOR_CONF restart ${SERVICE_NAME}"; then
+        remote_exec "supervisorctl -c $SUPERVISOR_CONF start ${SERVICE_NAME}"
     fi
 }
 
@@ -312,7 +320,7 @@ cert_domain_for_env() {
 deploy_nginx_ssl() {
     local env="$DEPLOY_ENV"
     local nginx_main_conf="$DEPLOY_CONF_DIR/nginx/nginx.conf"
-    local remote_site_conf="/etc/nginx/conf.d/<SERVICE_NAME>.conf"
+    local remote_site_conf="/etc/nginx/conf.d/${SERVICE_NAME}.conf"
     local remote_cert_dir="/etc/nginx/ssl"
     local has_cert=false
     local nginx_conf cert_domain
@@ -333,20 +341,20 @@ deploy_nginx_ssl() {
     fi
 
     if [ "$has_cert" = true ]; then
-        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/<SERVICE_NAME>.$env.conf"
+        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/${SERVICE_NAME}.$env.conf"
         [ -f "$nginx_conf" ] || fail "nginx 站点配置不存在: $nginx_conf"
     else
         log "警告: 证书未找到（$remote_cert_dir），降级使用 dev 配置（HTTP）"
-        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/<SERVICE_NAME>.dev.conf"
+        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/${SERVICE_NAME}.dev.conf"
         [ -f "$nginx_conf" ] || fail "nginx dev 配置不存在: $nginx_conf"
     fi
 
     if [ -n "$REMOTE_HOST" ]; then
         log "安装 nginx（apt）: $REMOTE_HOST"
         remote_exec "apt-get update -qq && apt-get install -y -qq nginx >/dev/null 2>&1" || fail "远程安装 nginx 失败"
-        log "上传 nginx.conf 主配置到 $REMOTE_HOST:/etc/nginx/nginx.conf"
+        log "上传 nginx.conf 主配置: $HOST_TAG → $REMOTE_HOST:/etc/nginx/nginx.conf"
         rsync -az "$nginx_main_conf" "$REMOTE_HOST:/etc/nginx/nginx.conf"
-        log "上传站点配置到 $REMOTE_HOST:$remote_site_conf"
+        log "上传站点配置: $HOST_TAG → $REMOTE_HOST:$remote_site_conf"
         remote_exec "mkdir -p /etc/nginx/conf.d"
         rsync -az "$nginx_conf" "$REMOTE_HOST:$remote_site_conf"
         remote_exec "rm -f /etc/nginx/sites-enabled/default"
@@ -377,7 +385,7 @@ deploy_nginx_ssl() {
 # 后端部署时自动同步 nginx 站点配置（目标已装 nginx 则校验+reload，未装则跳过）
 sync_nginx_conf() {
     local env="${DEPLOY_ENV:-dev}"
-    local site_conf="/etc/nginx/conf.d/<SERVICE_NAME>.conf"
+    local site_conf="/etc/nginx/conf.d/${SERVICE_NAME}.conf"
     local cert_dir="/etc/nginx/ssl"
     local has_cert=false
     local cert_domain
@@ -403,10 +411,10 @@ sync_nginx_conf() {
 
     local nginx_conf
     if [ "$has_cert" = true ]; then
-        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/<SERVICE_NAME>.$env.conf"
+        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/${SERVICE_NAME}.$env.conf"
         [ -f "$nginx_conf" ] || fail "nginx 站点配置不存在: $nginx_conf"
     else
-        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/<SERVICE_NAME>.dev.conf"
+        nginx_conf="$DEPLOY_CONF_DIR/nginx/vhosts/${SERVICE_NAME}.dev.conf"
         [ -f "$nginx_conf" ] || fail "nginx dev 配置不存在: $nginx_conf"
     fi
     log "同步 nginx 站点配置: $nginx_conf → $site_conf"
@@ -470,7 +478,9 @@ build_android_app() {
         fi
 
         log "Gradle 构建 Android APK（envs: ${envs[*]}）... ANDROID_HOME=$ANDROID_HOME"
-        if (cd "$src" && "$gradle_bin" "${tasks[@]}" "${sign_args[@]}" --no-daemon --console=plain); then
+        GRADLE_LOG_FILE="$RUNTIME_DIR/deploy-android-build-$(date '+%Y%m%d%H%M%S').log"
+        log "Gradle 构建日志: $GRADLE_LOG_FILE"
+        if (cd "$src" && "$gradle_bin" "${tasks[@]}" "${sign_args[@]}" --no-daemon --console=plain) >"$GRADLE_LOG_FILE" 2>&1; then
             mkdir -p "$MOBILE_APPS_DIR"
             local apk idx
             for idx in "${!envs[@]}"; do
@@ -479,14 +489,16 @@ build_android_app() {
                 if [ -z "$apk" ]; then
                     fail "未找到 ${envs[$idx]} 环境 APK 产物，请检查 Gradle 构建输出"
                 fi
-                MOBILE_ANDROID_ARTIFACTS+=("$MOBILE_APPS_DIR/<SERVICE_NAME>-android-${envs[$idx]}-${MOBILE_APP_VERSION}.apk")
+                MOBILE_ANDROID_ARTIFACTS+=("$MOBILE_APPS_DIR/${SERVICE_NAME}-android-${envs[$idx]}-${MOBILE_APP_VERSION}.apk")
                 cp -f "$apk" "${MOBILE_ANDROID_ARTIFACTS[-1]}"
                 log "Android 产物（${envs[$idx]}）: ${MOBILE_ANDROID_ARTIFACTS[-1]}"
             done
             MOBILE_ANDROID_MODE="APK（Gradle 构建，envs: ${envs[*]}）"
             return
         fi
-        fail "Android 构建失败，请检查 Gradle/Android SDK 环境"
+        log "错误: Android 构建失败，日志最后 120 行:"
+        tail -n 120 "$GRADLE_LOG_FILE" || true
+        fail "Android 构建失败，完整日志: $GRADLE_LOG_FILE"
     fi
 
     log "未检测到 Gradle + Android SDK（$ANDROID_HOME），回退为源码打包"
@@ -506,23 +518,23 @@ read_env_value() {
 }
 
 stop_service() {
-    log "停止服务: <SERVICE_NAME>"
+    log "停止服务: ${SERVICE_NAME}"
     if [ -n "$REMOTE_HOST" ]; then
-        remote_exec "supervisorctl -c $SUPERVISOR_CONF stop <SERVICE_NAME>" || true
+        remote_exec "supervisorctl -c $SUPERVISOR_CONF stop ${SERVICE_NAME}" || true
     else
-        supervisorctl -c "$SUPERVISOR_CONF" stop "<SERVICE_NAME>" || true
+        supervisorctl -c "$SUPERVISOR_CONF" stop "${SERVICE_NAME}" || true
     fi
 }
 
 start_service() {
-    log "启动服务: <SERVICE_NAME>"
+    log "启动服务: ${SERVICE_NAME}"
     if [ -n "$REMOTE_HOST" ]; then
         remote_exec "supervisorctl -c $SUPERVISOR_CONF reread && supervisorctl -c $SUPERVISOR_CONF update" || true
-        remote_exec "supervisorctl -c $SUPERVISOR_CONF start <SERVICE_NAME>" || true
+        remote_exec "supervisorctl -c $SUPERVISOR_CONF start ${SERVICE_NAME}" || true
     else
         supervisorctl -c "$SUPERVISOR_CONF" reread
         supervisorctl -c "$SUPERVISOR_CONF" update
-        supervisorctl -c "$SUPERVISOR_CONF" start "<SERVICE_NAME>" || true
+        supervisorctl -c "$SUPERVISOR_CONF" start "${SERVICE_NAME}" || true
     fi
 }
 
@@ -538,7 +550,7 @@ sync_database() {
     [ -n "$src_password" ] || fail "无法从 $src_env_file 读取 DB_PASSWORD"
 
     if [ "$AUTO_CONFIRM" != true ]; then
-        log "警告: 此操作将删除并重建 $REMOTE_HOST 上的数据库: $DB_NAME"
+        log "警告: 此操作将删除并重建数据库 $DB_TAG: $DB_NAME"
         printf "输入 yes 确认继续: "
         local confirm
         read -r confirm
@@ -549,24 +561,24 @@ sync_database() {
     ts="$(date '+%Y%m%d%H%M%S')"
     dump_file="$RUNTIME_DIR/db-sync-${DB_NAME}-${ts}.sql"
 
-    log "导出本地数据库: $DB_NAME（$src_host:$src_port）"
+    log "导出本地数据库: $DB_SRC_TAG（$src_host:$src_port）"
     PGPASSWORD="$src_password" pg_dump \
         -h "$src_host" -p "$src_port" -U "$src_user" \
         -d "$DB_NAME" --no-owner --no-privileges \
         -f "$dump_file" || fail "pg_dump 失败: $DB_NAME"
 
-    log "上传 dump 到 $REMOTE_HOST:/tmp/${DB_NAME}.sql"
+    log "上传 dump: $DB_TAG → $REMOTE_HOST:/tmp/${DB_NAME}.sql"
     rsync -az "$dump_file" "$REMOTE_HOST:/tmp/${DB_NAME}.sql"
     remote_exec "chmod 644 /tmp/${DB_NAME}.sql"
 
-    log "远程重建数据库: $DB_NAME（断开连接 → drop → create → restore）"
+    log "远程重建数据库: $DB_TAG（断开连接 → drop → create → restore）"
     remote_exec "sudo -u postgres psql -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$DB_NAME' AND pid<>pg_backend_pid();\" >/dev/null 2>&1" || true
     remote_exec "sudo -u postgres dropdb --if-exists $DB_NAME"  || fail "远程 dropdb 失败: $DB_NAME"
     remote_exec "sudo -u postgres createdb $DB_NAME"             || fail "远程 createdb 失败: $DB_NAME"
     remote_exec "sudo -u postgres psql -v ON_ERROR_STOP=1 -d $DB_NAME -f /tmp/${DB_NAME}.sql >/dev/null" \
         || fail "远程恢复失败: $DB_NAME"
     remote_exec "rm -f /tmp/${DB_NAME}.sql"
-    log "数据库同步完成: $DB_NAME → $REMOTE_HOST"
+    log "数据库同步完成: $DB_TAG（本机/源 → $REMOTE_HOST）"
 }
 
 # ── 参数解析 ─────────────────────────────────────────────────────
@@ -574,41 +586,35 @@ sync_database() {
 set_deploy_target() {
     case "$1" in
         all)
+            # all = 重置为默认组合（backend + web），供逗号多值场景归位
             DEPLOY_BACKEND=true
             DEPLOY_WEB=true
             ;;
         backend)
             DEPLOY_BACKEND=true
-            DEPLOY_WEB=false
             ;;
         web)
-            DEPLOY_BACKEND=false
             DEPLOY_WEB=true
             ;;
         ssl|nginx)
-            DEPLOY_BACKEND=false
-            DEPLOY_WEB=false
             DEPLOY_SSL=true
             ;;
         android)
-            DEPLOY_BACKEND=false
-            DEPLOY_WEB=false
             DEPLOY_ANDROID=true
             ;;
         db|database)
-            DEPLOY_BACKEND=false
-            DEPLOY_WEB=false
             DEPLOY_DB=true
             DB_ONLY=true
             ;;
         *)
-            fail "未知部署目标: $1；可选值: all, backend, web, ssl, android, db"
+            fail "未知部署目标: $1；可选值: all, backend, web, ssl, android, db（可逗号分隔多值）"
             ;;
     esac
 }
 
 parse_deploy_args() {
     local target_set=false
+    local orig_args=("$@")
 
     DEPLOY_BACKEND=true
     DEPLOY_WEB=true
@@ -618,6 +624,25 @@ parse_deploy_args() {
     DB_ONLY=false
     AUTO_CONFIRM=false
 
+    # 首个显式目标出现时重置默认组合，之后逐个累积（支持逗号多值）
+    apply_target() {
+        if [ "$target_set" = false ]; then
+            DEPLOY_BACKEND=false
+            DEPLOY_WEB=false
+            DEPLOY_SSL=false
+            DEPLOY_ANDROID=false
+            DEPLOY_DB=false
+            DB_ONLY=false
+            target_set=true
+        fi
+        local _tarr=() _t
+        IFS=',' read -r -a _tarr <<< "$1"
+        for _t in "${_tarr[@]}"; do
+            _t="$(echo "$_t" | tr -d '[:space:]')"
+            [ -n "$_t" ] && set_deploy_target "$_t"
+        done
+    }
+
     while [ "$#" -gt 0 ]; do
         case "$1" in
             -h|--help)
@@ -626,18 +651,22 @@ parse_deploy_args() {
                 ;;
             -t|--target)
                 [ "$#" -ge 2 ] || fail "$1 缺少参数"
-                set_deploy_target "$2"
-                target_set=true
+                apply_target "$2"
                 shift 2
                 ;;
-            --all)         set_deploy_target "all";     target_set=true; shift ;;
-            --backend)     set_deploy_target "backend"; target_set=true; shift ;;
-            --web)         set_deploy_target "web";     target_set=true; shift ;;
-            --ssl|--nginx) set_deploy_target "ssl";     target_set=true; shift ;;
-            --android)     set_deploy_target "android"; target_set=true; shift ;;
+            --all)         apply_target "all";     shift ;;
+            --backend)     apply_target "backend"; shift ;;
+            --web)         apply_target "web";     shift ;;
+            --ssl|--nginx) apply_target "ssl";     shift ;;
+            --android)     apply_target "android"; shift ;;
             --db|--database)
                 DEPLOY_DB=true
                 shift
+                ;;
+            -s|--services)
+                [ "$#" -ge 2 ] || fail "$1 缺少参数"
+                SERVICES_RAW="$2"
+                shift 2
                 ;;
             -e|--env)
                 [ "$#" -ge 2 ] || fail "$1 缺少参数"
@@ -662,6 +691,34 @@ parse_deploy_args() {
                 ;;
         esac
     done
+
+    # 多服务：逐个服务重新执行本脚本（各自独立的服务目录/端口/日志/健康检查）
+    if [ -n "$SERVICES_RAW" ]; then
+        local _svc_arr=() _svc_list=() _s _fwd=() _skip=0 _i=0 _total
+        IFS=',' read -r -a _svc_arr <<< "$SERVICES_RAW"
+        for _s in "${_svc_arr[@]}"; do
+            _s="$(echo "$_s" | tr -d '[:space:]')"
+            [ -n "$_s" ] && _svc_list+=("$_s")
+        done
+        [ "${#_svc_list[@]}" -gt 0 ] || fail "--services 不能为空"
+        if [ "${#_svc_list[@]}" -eq 1 ]; then
+            SERVICE_NAME="${_svc_list[0]}"
+        else
+            for _s in "${orig_args[@]}"; do
+                if [ "$_skip" = 1 ]; then _skip=0; continue; fi
+                case "$_s" in -s|--services) _skip=1 ;; *) _fwd+=("$_s") ;; esac
+            done
+            _total="${#_svc_list[@]}"
+            for _s in "${_svc_list[@]}"; do
+                _i=$((_i + 1))
+                log "════════ 多服务部署 [$_i/$_total]: $_s ════════"
+                DEPLOY_SERVICE_OVERRIDE="$_s" DEPLOY_SUPPRESS_SUMMARY=1 \
+                    bash "$SCRIPT_DIR/deploy.sh" "${_fwd[@]}" || fail "服务 $_s 部署失败"
+            done
+            echo "[STATUS] OK - 多服务部署完成: ${_svc_list[*]}"
+            exit 0
+        fi
+    fi
 
     if [ "$DB_ONLY" = true ]; then
         DEPLOY_BACKEND=false
@@ -703,22 +760,37 @@ if [ "$CURRENT_DIR" != "$PROJECT_DIR" ]; then
 fi
 
 # ── 变量声明 ─────────────────────────────────────────────────────
+# 默认服务名；-s/--services 或 DEPLOY_SERVICE_OVERRIDE 可在运行时切换
+SERVICE_NAME="${DEPLOY_SERVICE_OVERRIDE:-<SERVICE_NAME>}"
 REMOTE_HOST=""
 DEPLOY_ENV=""
-BACKEND_DIR="$PROJECT_DIR/src/backend/<SERVICE_NAME>"
+SERVICES_RAW=""
 WEB_DIR="$PROJECT_DIR/src/web"
 ANDROID_DIR="$PROJECT_DIR/src/android"
 MOBILE_APPS_DIR="$PROJECT_DIR/mobile-apps"
 DEPLOY_CONF_DIR="$PROJECT_DIR/deploy-conf"
-DB_NAME="${DB_NAME:-<SERVICE_NAME>}"
-APP_DIR="/opt/soft/apps/<SERVICE_NAME>"
-LOG_DIR="/data/logs/apps/<SERVICE_NAME>"
-WEB_DEPLOY_PATH="${WEB_DEPLOY_PATH:-$APP_DIR/web}"
 RUNTIME_DIR="$PROJECT_DIR/runtime"
 SUPERVISOR_CONF="${SUPERVISOR_CONF:-/etc/supervisor/supervisord.conf}"
 SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
 
 parse_deploy_args "$@"
+
+# 依赖 SERVICE_NAME 的路径变量（参数解析后确定，支持 -s 多服务切换）
+BACKEND_DIR="$PROJECT_DIR/src/backend/${SERVICE_NAME}"
+DB_NAME="${DB_NAME:-${SERVICE_NAME}}"
+APP_DIR="/opt/soft/apps/${SERVICE_NAME}"
+LOG_DIR="/data/logs/apps/${SERVICE_NAME}"
+WEB_DEPLOY_PATH="${WEB_DEPLOY_PATH:-$APP_DIR/web}"
+
+# 日志定位标签：统一输出 "服务名（主机/数据库，本机|远程）"，便于按服务检索日志
+if [ -n "$REMOTE_HOST" ]; then
+    HOST_TAG="${SERVICE_NAME}（主机，远程 ${REMOTE_HOST}）"
+    DB_TAG="${SERVICE_NAME}（数据库，远程 ${REMOTE_HOST}）"
+else
+    HOST_TAG="${SERVICE_NAME}（主机，本机）"
+    DB_TAG="${SERVICE_NAME}（数据库，本机）"
+fi
+DB_SRC_TAG="${SERVICE_NAME}（数据库，本机/源）"
 
 # ── 依赖检查 ─────────────────────────────────────────────────────
 if [ "$DEPLOY_BACKEND" = true ]; then
@@ -756,7 +828,7 @@ fi
 BACKEND_VERSION="-"
 if [ "$DEPLOY_BACKEND" = true ]; then
     BACKEND_VERSION="$(read_backend_version "$BACKEND_DIR/pom.xml")"
-    [ -n "$BACKEND_VERSION" ] || fail "无法从 pom.xml 读取 <SERVICE_NAME> 版本"
+    [ -n "$BACKEND_VERSION" ] || fail "无法从 pom.xml 读取 ${SERVICE_NAME} 版本"
 fi
 
 MOBILE_APP_VERSION="1.0.0"
@@ -785,7 +857,7 @@ DEPLOY_TARGETS=()
 [ "$DEPLOY_DB" = true ]     && DEPLOY_TARGETS+=("db")
 log "本次部署目标   : ${DEPLOY_TARGETS[*]:-（无）}"
 log "  目标环境       : ${DEPLOY_ENV:-dev}"
-log "  部署位置       : ${REMOTE_HOST:-本机}"
+log "  部署位置       : $HOST_TAG"
 log "======================================================"
 log "  项目根目录     : $PROJECT_DIR"
 [ -n "$REMOTE_HOST" ] && log "  远程服务器     : $REMOTE_HOST"
@@ -803,7 +875,7 @@ if [ "$DEPLOY_ANDROID" = true ]; then
     fi
 fi
 if [ "$DEPLOY_DB" = true ]; then
-    log "  数据库同步     : $DB_NAME → $REMOTE_HOST（本地 pg_dump，远程 drop+recreate）"
+    log "  数据库同步     : $DB_SRC_TAG → $DB_TAG（本地 pg_dump，远程 drop+recreate）"
 fi
 log "======================================================"
 
@@ -812,9 +884,9 @@ mkdir -p "$RUNTIME_DIR"
 # ── 初始化部署目录（db-only 时跳过，避免在纯数据库同步场景创建无关目录）────
 if [ "$DB_ONLY" = false ]; then
 if [ -n "$REMOTE_HOST" ]; then
-    log "初始化远程目录: $APP_DIR, $LOG_DIR, $SUPERVISOR_CONF_DIR"
+    log "初始化远程目录: $HOST_TAG（$APP_DIR, $LOG_DIR, $SUPERVISOR_CONF_DIR）"
     remote_exec "mkdir -p $APP_DIR $LOG_DIR $WEB_DEPLOY_PATH $SUPERVISOR_CONF_DIR /data/logs/nginx"
-    log "部署 apply-ssl.sh 到 $REMOTE_HOST:$APP_DIR/"
+    log "部署 apply-ssl.sh: $HOST_TAG → $REMOTE_HOST:$APP_DIR/"
     rsync -az "$SCRIPT_DIR/apply-ssl.sh" "$REMOTE_HOST:$APP_DIR/apply-ssl.sh"
     remote_exec "chmod +x $APP_DIR/apply-ssl.sh"
 else
@@ -838,7 +910,7 @@ PHASE_INDEX=1
 
 # ── 数据库同步（仅 --target db）──────────────────────────────────
 if [ "$DEPLOY_DB" = true ] && [ "$DB_ONLY" = true ]; then
-    log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 同步数据库到 $REMOTE_HOST（停止服务→同步→恢复） =========="
+    log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 同步数据库 $DB_TAG（停止服务→同步→恢复） =========="
     PHASE_INDEX=$((PHASE_INDEX + 1))
     stop_service
     sync_database
@@ -857,32 +929,32 @@ if [ "$DEPLOY_BACKEND" = true ]; then
     log "Maven 构建完成"
 
     if [ "$DEPLOY_DB" = true ]; then
-        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 停止服务并同步数据库到 $REMOTE_HOST =========="
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 停止服务并同步数据库 $DB_TAG =========="
         PHASE_INDEX=$((PHASE_INDEX + 1))
         stop_service
         sync_database
     fi
 
     if [ -n "$REMOTE_HOST" ]; then
-        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 上传 JAR 到 $REMOTE_HOST =========="
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 上传 JAR（$HOST_TAG） =========="
         PHASE_INDEX=$((PHASE_INDEX + 1))
         remote_deploy_service_jar
 
-        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 远程重启 supervisor 服务 =========="
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 远程重启 supervisor 服务（$HOST_TAG） =========="
         PHASE_INDEX=$((PHASE_INDEX + 1))
         remote_restart_service
         remote_wait_service_ready
     else
-        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 部署 JAR 到 $APP_DIR =========="
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 部署 JAR（$HOST_TAG → $APP_DIR） =========="
         PHASE_INDEX=$((PHASE_INDEX + 1))
         deploy_service_jar
 
-        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 刷新并重启 supervisor 服务 =========="
+        log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 刷新并重启 supervisor 服务（$HOST_TAG） =========="
         PHASE_INDEX=$((PHASE_INDEX + 1))
         supervisorctl -c "$SUPERVISOR_CONF" reread
         supervisorctl -c "$SUPERVISOR_CONF" update
         restart_service
-        supervisorctl -c "$SUPERVISOR_CONF" status "<SERVICE_NAME>"
+        supervisorctl -c "$SUPERVISOR_CONF" status "${SERVICE_NAME}"
         wait_service_ready
     fi
 
@@ -898,7 +970,13 @@ if [ "$DEPLOY_WEB" = true ]; then
     log_step "========== Phase $PHASE_INDEX/$PHASE_TOTAL: 构建并部署前端静态资源 =========="
     PHASE_INDEX=$((PHASE_INDEX + 1))
     log "构建前端: $WEB_DIR"
-    (cd "$WEB_DIR" && npm ci --no-audit --no-fund && npm run build)
+    WEB_LOG_FILE="$RUNTIME_DIR/deploy-web-build-$(date '+%Y%m%d%H%M%S').log"
+    log "前端构建日志: $WEB_LOG_FILE"
+    if ! (cd "$WEB_DIR" && npm ci --no-audit --no-fund && npm run build) >"$WEB_LOG_FILE" 2>&1; then
+        log "错误: 前端构建失败，日志最后 120 行:"
+        tail -n 120 "$WEB_LOG_FILE" || true
+        fail "前端构建失败，完整日志: $WEB_LOG_FILE"
+    fi
     [ -d "$WEB_DIR/dist" ] || fail "未找到前端构建产物: $WEB_DIR/dist"
     if [ -n "$REMOTE_HOST" ]; then
         rsync -az --delete "$WEB_DIR/dist/" "$REMOTE_HOST:$WEB_DEPLOY_PATH/"
@@ -924,13 +1002,14 @@ if [ "$DEPLOY_SSL" = true ]; then
 fi
 
 # ── [STATUS] 机器可读输出 ─────────────────────────────────────────
+if [ "${DEPLOY_SUPPRESS_SUMMARY:-}" != "1" ]; then
 log "部署完成"
 if [ "$DEPLOY_DB" = true ] && [ "$DB_ONLY" = true ]; then
-    echo "[STATUS] OK - 数据库已同步到 $REMOTE_HOST（$DB_NAME）"
+    echo "[STATUS] OK - 数据库已同步: $DB_TAG"
 elif [ "$DEPLOY_ANDROID" = true ]; then
     echo "[STATUS] OK - Android 构建完成，产物见 mobile-apps/"
 elif [ -n "$REMOTE_HOST" ]; then
-    echo "[STATUS] OK - 已远程部署到 $REMOTE_HOST（${DEPLOY_TARGETS[*]}）"
+    echo "[STATUS] OK - 已远程部署: $HOST_TAG（${DEPLOY_TARGETS[*]}）"
 elif [ "$DEPLOY_SSL" = true ] && [ "$DEPLOY_BACKEND" = false ] && [ "$DEPLOY_WEB" = false ]; then
     echo "[STATUS] OK - SSL/Nginx 已部署（环境: ${DEPLOY_ENV}）"
 elif [ "$DEPLOY_BACKEND" = true ] && [ "$DEPLOY_WEB" = true ]; then
@@ -964,23 +1043,23 @@ SUMMARY_HOST_PREFIX=""
 echo
 echo "══════════════════════ 部署摘要 ══════════════════════"
 echo "  ▍访问地址（本次环境: ${DEPLOY_ENV:-dev}）"
-echo "    dev   http://$SUMMARY_HOST:${NGINX_PORT}/<SERVICE_NAME>/api/health"
-echo "    test  https://<TEST_DOMAIN>:${NGINX_PORT}/<SERVICE_NAME>/api/health"
-echo "    prod  https://<PROD_DOMAIN>:${NGINX_PORT}/<SERVICE_NAME>/api/health"
+echo "    dev   http://$SUMMARY_HOST:${NGINX_PORT}/${SERVICE_NAME}/api/health"
+echo "    test  https://<TEST_DOMAIN>:${NGINX_PORT}/${SERVICE_NAME}/api/health"
+echo "    prod  https://<PROD_DOMAIN>:${NGINX_PORT}/${SERVICE_NAME}/api/health"
 echo
 echo "  ▍应用位置"
 if [ "$DEPLOY_BACKEND" = true ]; then
-    echo "    JAR          : ${SUMMARY_HOST_PREFIX}${APP_DIR}/<SERVICE_NAME>-${BACKEND_VERSION}.jar"
+    echo "    JAR          : ${SUMMARY_HOST_PREFIX}${APP_DIR}/${SERVICE_NAME}-${BACKEND_VERSION}.jar"
     echo "    日志目录      : ${SUMMARY_HOST_PREFIX}${LOG_DIR}"
 fi
 if [ "$DEPLOY_WEB" = true ]; then
     echo "    前端静态资源  : ${SUMMARY_HOST_PREFIX}${WEB_DEPLOY_PATH}"
 fi
 if [ "$DEPLOY_SSL" = true ]; then
-    echo "    Nginx 站点配置: ${SUMMARY_HOST_PREFIX}/etc/nginx/conf.d/<SERVICE_NAME>.conf"
+    echo "    Nginx 站点配置: ${SUMMARY_HOST_PREFIX}/etc/nginx/conf.d/${SERVICE_NAME}.conf"
 fi
 if [ "$DEPLOY_DB" = true ]; then
-    echo "    数据库同步     : $DB_NAME → $REMOTE_HOST（本地 pg_dump，远程 drop+recreate）"
+    echo "    数据库同步     : $DB_SRC_TAG → $DB_TAG（pg_dump → drop+recreate）"
     echo "    dump 缓存      : $RUNTIME_DIR/db-sync-${DB_NAME}-*.sql"
 fi
 if [ "$DEPLOY_ANDROID" = true ] && [ "${#MOBILE_ANDROID_ARTIFACTS[@]}" -gt 0 ]; then
@@ -992,3 +1071,4 @@ if [ "$DEPLOY_ANDROID" = true ] && [ "${#MOBILE_ANDROID_ARTIFACTS[@]}" -gt 0 ]; 
     echo "    构建模式   : $MOBILE_ANDROID_MODE"
 fi
 echo "══════════════════════════════════════════════════════"
+fi

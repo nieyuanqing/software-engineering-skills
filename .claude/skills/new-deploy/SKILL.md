@@ -38,6 +38,9 @@ description: 为 Java/Spring Boot 工程生成 scripts/deploy.sh 和 scripts/app
 
 deploy.sh 主要能力
   目标: -t/--target all|backend|web|ssl|android|db（默认 all；--has-web=false 时默认 backend）
+        支持逗号分隔多值（如 -t backend,web），按书写顺序叠加
+  服务: -s/--services NAME[,NAME...] 依次部署多个服务（每个对应 src/backend/<name>，
+        独立服务目录/日志/supervisor 进程；单值等价切换服务名）
   环境: -e/--env dev|test|prod（默认 dev）
   远程: -r/--remote USER@HOST（本地 Maven 构建，rsync 上传 JAR，SSH 远程重启）
   ssl:  --target ssl --env test|prod 安装 nginx（apt）+ 主配置 + 站点配置
@@ -47,6 +50,8 @@ deploy.sh 主要能力
   健康检查: http://127.0.0.1:<APP_PORT>/api/<SERVICE_NAME>/health，最长等待 420s
   supervisord 配置: 部署时 inline 生成，不依赖静态 ini 文件
   env 文件: 按环境选择 .env / .env.test / .env.prod（来自 src/backend/<SERVICE_NAME>/）
+  构建日志: mvn/gradle/npm 过程日志不在终端显示，落盘 ./runtime/deploy-*-<时间戳>.log（失败时打印末尾 120 行）
+  日志标签: 涉及主机/数据库的日志统一带 "<SERVICE_NAME>（主机|数据库，本机|远程）" 标签，便于定位
   日志格式: [YYYY-MM-DD HH:MM:SS] [deploy.sh] ... + Phase N/M 阶段编号
   状态输出: [STATUS] OK / [STATUS] ERROR 机器可读行
 
