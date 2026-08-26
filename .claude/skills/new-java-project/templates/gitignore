@@ -33,8 +33,10 @@ application-local.yml
 *.dump
 *.sqlite
 *.db
-# 如需版本化管理迁移 SQL，按实际目录放开例外，例如：
-# !src/**/db/migration/*.sql
+# sql/backup/ 存放数据库备份导出文件，不入库
+sql/backup/
+# sql/update/ 存放更新 SQL 脚本，允许入库
+!sql/update/*.sql
 
 # ── 前端（HAS_WEB=true 时适用）──────────────────────────────
 node_modules/

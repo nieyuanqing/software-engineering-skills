@@ -91,6 +91,9 @@ software-engineering-skills/
             ├── deploy-conf/
             │   ├── env.dev/test/prod  环境变量模板三套（含 SPRING_PROFILES_ACTIVE）
             │   └── nginx/vhosts/service.{dev,test,prod}.conf  vhost 模板三套（按服务名渲染）
+            ├── sql/
+            │   ├── README.md          sql/ 目录约定说明（备份与更新 SQL 的存放规则）
+            │   └── update/.gitkeep    更新脚本目录占位文件（backup/ 不入库，无占位）
             └── src/main/resources/
                 ├── application.yml    Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
                 ├── application-dev.yml    dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
@@ -130,7 +133,8 @@ software-engineering-skills/
 |---|---|
 | `scripts/deploy.sh` | 部署脚本（见下方"deploy.sh 能力"） |
 | `scripts/apply-ssl.sh` | SSL 证书申请（Let's Encrypt + acme.sh，HTTP-01 webroot 验证） |
-| `.gitignore` | 标准忽略清单（含 env 环境变量文件与 SQL/数据库文件；已存在时仅合并缺失条目） |
+| `.gitignore` | 标准忽略清单（含 env 环境变量文件与 SQL/数据库文件；`sql/backup/` 忽略、`sql/update/` 入库；已存在时仅合并缺失条目） |
+| `sql/README.md` + `sql/backup/` + `sql/update/` | 数据库备份与更新 SQL 文件目录（backup 存放备份导出文件不入库，update 存放更新脚本入库） |
 | `deploy-conf/nginx/vhosts/<name>.dev.conf` | nginx vhost — dev 环境（HTTP，无域名） |
 | `deploy-conf/nginx/vhosts/<name>.test.conf` | nginx vhost — test 环境（HTTPS，绑定测试域名） |
 | `deploy-conf/nginx/vhosts/<name>.prod.conf` | nginx vhost — prod 环境（HTTPS，绑定生产域名） |
@@ -308,7 +312,7 @@ software-engineering-skills/
 - **任务摘要**：每次任务完成后输出结果清单、影响范围（新增/修改/删除文件）、开始和结束时间
 - **v0 文档保护**：工程根目录 `v0/` 下的原始产品设计文档只读，禁止修改（`src/web/v0/` 为 AI 生成代码目录，不受此限制）
 - **禁止硬编码**：密码、密钥、Token 等敏感信息必须通过环境变量或占位符处理
-- **自动压缩上下文**：上下文窗口使用率达到 70% 时自动执行 `/compact`
+- **env 配置对齐**：dev/test/prod 三套环境配置文件变量键集合必须保持对齐，新增/删除/更名变量时三套同步变更
 
 **用法**
 

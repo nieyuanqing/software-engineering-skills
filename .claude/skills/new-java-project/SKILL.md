@@ -51,6 +51,7 @@ description: 为 Java/Spring Boot 工程生成完整的标准化部署配置：d
     - src/backend/<name>/src/main/resources/application-dev.yml      dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
     - src/backend/<name>/src/main/resources/application-test.yml     test profile（INFO 日志，Swagger 开启）
     - src/backend/<name>/src/main/resources/application-prod.yml     prod profile（WARN 日志，Swagger 关闭）
+    - sql/README.md + sql/backup/ + sql/update/          数据库备份与更新 SQL 文件目录（backup 不入库，update 入库）
     - specs/deployment.md                  本工程专属部署规范文档
     - specs/baseline-versions.md           基线版本规范（JDK、PostgreSQL、Spring Boot 等）
 
@@ -163,9 +164,14 @@ src/backend/<SERVICE_NAME>/src/main/resources/application.yml
 src/backend/<SERVICE_NAME>/src/main/resources/application-dev.yml
 src/backend/<SERVICE_NAME>/src/main/resources/application-test.yml
 src/backend/<SERVICE_NAME>/src/main/resources/application-prod.yml
+sql/README.md
+sql/update/.gitkeep
 specs/deployment.md
 specs/baseline-versions.md
 ```
+
+> `sql/backup/` 同时创建（空目录，整体被 .gitignore 忽略，不需要占位文件）；
+> `sql/update/.gitkeep` 为空占位文件，保证空目录可入库。
 
 ---
 
@@ -207,13 +213,15 @@ specs/baseline-versions.md
 | `src/backend/<SERVICE_NAME>/src/main/resources/application-dev.yml` | `templates/src/main/resources/application-dev.yml` |
 | `src/backend/<SERVICE_NAME>/src/main/resources/application-test.yml` | `templates/src/main/resources/application-test.yml` |
 | `src/backend/<SERVICE_NAME>/src/main/resources/application-prod.yml` | `templates/src/main/resources/application-prod.yml` |
+| `sql/README.md` | `templates/sql/README.md` |
+| `sql/update/.gitkeep` | `templates/sql/update/.gitkeep`（空占位文件，原样复制） |
 | `specs/deployment.md` | `specs/deployment-template.md` |
 | `specs/baseline-versions.md` | `specs/baseline-versions-template.md` |
 
 ### `.gitignore` 生成规则
 
 - 目标工程**没有** `.gitignore` → 按 `templates/gitignore` 模板整体生成（含 Java/Maven、IDE、日志、**env 环境变量文件**、**SQL/数据库文件**、前端与构建产物等条目）。
-- 目标工程**已有** `.gitignore` → 不覆盖，仅将模板中缺失的条目合并追加（重点确保：`.env` / `.env.*` / `*.env` / `env.local` / `application-local.yml` 等 env 文件，`*.sql` / `*.dump` / `*.sqlite` / `*.db` 等 SQL/数据库文件），已存在的条目不重复添加。
+- 目标工程**已有** `.gitignore` → 不覆盖，仅将模板中缺失的条目合并追加（重点确保：`.env` / `.env.*` / `*.env` / `env.local` / `application-local.yml` 等 env 文件，`*.sql` / `*.dump` / `*.sqlite` / `*.db` 等 SQL/数据库文件，以及 `sql/backup/`（忽略）与 `!sql/update/*.sql`（更新脚本入库例外）），已存在的条目不重复添加。
 - 注意：`deploy-conf/env.dev|test|prod` 是占位符模板，属于应提交文件，**不得**加入忽略清单。
 
 ### `HAS_WEB=false` 时的处理
