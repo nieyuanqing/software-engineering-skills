@@ -1,6 +1,6 @@
 ---
 name: common-rules
-description: 通用行为规范，适用于所有任务：每次任务完成后输出中文结果清单、影响范围和开始/结束时间（摘要必须采用中文）；禁止修改工程根目录 v0/ 下的原始产品设计文档（只读，src/web/v0 代码目录除外）；禁止在代码、配置、脚本中硬编码任何敏感信息；git commit message 必须使用结构化格式；CORS 必须在 nginx 配置中实现，禁止在 Java 后端处理；dev/test/prod 三套 env 配置文件的变量键必须保持自动对齐。
+description: 通用行为规范，适用于所有任务：每次任务完成后输出中文结果清单、影响范围和开始/结束时间（摘要必须采用中文）；禁止修改工程根目录 v0/ 下的原始产品设计文档（只读，src/web/v0 代码目录除外）；禁止在代码、配置、脚本中硬编码任何敏感信息；git commit message 必须使用结构化格式；CORS 必须在 nginx 配置中实现，禁止在 Java 后端处理；dev/test/prod 三套配置文件（env、nginx、application）的配置项必须保持自动对齐。
 ---
 
 # common-rules
@@ -78,12 +78,15 @@ description: 通用行为规范，适用于所有任务：每次任务完成后�
   CORS 响应头统一由 nginx 配置写入，后端不感知跨域逻辑。
   若发现已有后端 CORS 代码，立即告知用户，建议迁移到 nginx，不在后端继续扩展。
 
-规范六：dev / test / prod 三套 env 配置文件自动对齐
-  工程内的三套环境变量配置（如 deploy-conf/env.dev|test|prod、
-  src/backend/<服务名>/.env|.env.test|.env.prod）变量键集合必须保持对齐：
-    - 新增变量：三套环境文件同步新增（取值可按环境不同，模板文件用占位符）
-    - 删除 / 更名变量：三套同步删除 / 更名
-    - 三套文件只允许值不同，键清单必须一致
+规范六：dev / test / prod 三套配置文件自动对齐
+  三类按环境成对维护的配置文件必须保持配置项集合对齐：
+    - env：deploy-conf/env.dev|test|prod、src/backend/<服务名>/.env|.env.test|.env.prod
+    - nginx：deploy-conf/nginx/vhosts/<服务名>.dev|test|prod.conf
+    - 应用配置：src/main/resources/application-dev|-test|-prod.yml
+  要求：
+    - 新增 / 删除 / 更名配置项：三套环境文件同步变更，禁止只改其中一套
+    - 三套文件只允许值不同（域名、证书、日志级别等环境差异），
+      结构性配置块（location 块、数据源、健康检查等）不允许只存在于单一环境
     - 发现存量不对齐时立即告知用户，并一次性补齐对齐
 
 示例
@@ -206,13 +209,19 @@ docs: 更新 README，补充 deploy.sh 能力说明
 
 ---
 
-## 六、dev / test / prod 三套 env 配置文件自动对齐
+## 六、dev / test / prod 三套配置文件自动对齐
 
-**适用范围**：工程内按环境成对维护的环境变量配置文件——`deploy-conf/env.dev` / `env.test` / `env.prod`，以及后端服务的 `src/backend/<服务名>/.env` / `.env.test` / `.env.prod`。
+**适用范围**：工程内按环境成对维护的三类配置文件——
+
+| 类别 | 文件 |
+|---|---|
+| env | `deploy-conf/env.dev` / `env.test` / `env.prod`，`src/backend/<服务名>/.env` / `.env.test` / `.env.prod` |
+| nginx | `deploy-conf/nginx/vhosts/<服务名>.dev.conf` / `.test.conf` / `.prod.conf` |
+| 应用配置 | `src/backend/<服务名>/src/main/resources/application-dev.yml` / `-test.yml` / `-prod.yml` |
 
 **强制要求**：
-- 三套文件的**变量键集合必须保持对齐**：新增变量时同步写入三套环境文件；删除或更名变量时三套同步变更，禁止只改其中一套
-- 三套文件只允许**值**不同（各环境的实际取值），键清单必须一致
-- 占位符模板文件（如 `deploy-conf/env.*`）取值保持 `changeme` 等语义占位符，不写真实凭证（与规范三联动）
-- 发现存量不对齐（某键只存在于部分环境）时：立即告知用户，一次性补齐对齐后再继续当前任务
-- 部署脚本、文档中引用的环境变量发生变化时，同步检查三套文件是否均已更新
+- 三套文件的**配置项集合必须保持对齐**：新增配置项时同步写入三套环境文件；删除或更名配置项时三套同步变更，禁止只改其中一套
+- 三套文件只允许**值**不同（域名、端口、证书路径、日志级别、Swagger 开关等环境差异项）；**结构性配置块**（nginx 的 location/proxy_pass 块、应用的数据源、Actuator 健康检查端点等）不允许只存在于单一环境
+- env 占位符模板文件取值保持 `changeme` 等语义占位符，不写真实凭证（与规范三联动）
+- 发现存量不对齐（某配置项/配置块只存在于部分环境）时：立即告知用户，一次性补齐对齐后再继续当前任务
+- 部署脚本、文档中引用的配置项发生变化时，同步检查三套环境文件是否均已更新
