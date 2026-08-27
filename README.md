@@ -31,6 +31,7 @@
 | [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本 |
 | [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
+| [`/aicase`](#aicase) | 连接 aibug 系统，按时间拉取 Bug 清单，逐个分析转化为回归测试用例（test/cases/，P1，标记 AICASE SKILL 生成） |
 | [`/api‑test`](#api-test) | 全端（web 管理后台 / 小程序 / Android / iOS）扫描后端 API 生成 URL 清单，逐个验证 HTTP 200，非 200 与业务不合理处均定位修复 |
 | [`/do‑test`](#do-test) | 测试场景总驱动：调用 /api-test 完成 API 基本功能验证，并执行 test/cases/ 下的场景用例，汇总测试报告 |
 | [`/new‑test‑case`](#new-test-case) | 在 test/cases/ 下新增一个测试用例文件（TEST-CASE-{4位递增编号}.md），一次执行生成一个 |
@@ -50,6 +51,7 @@ software-engineering-skills/
 ├── README.md
 └── .claude/skills/
     ├── aibug/SKILL.md                 连接 aibug 系统，自动循环修复 Bug
+    ├── aicase/SKILL.md                拉取 aibug 近期 Bug，转化为回归测试用例（P1，AICASE 标记）
     ├── common-rules/SKILL.md          通用行为规范（任务摘要、v0 文档保护、禁止硬编码）
     ├── api-test/SKILL.md              全端扫描后端 API 生成 URL 清单，逐个验证 HTTP 200 并修复
     ├── do-test/SKILL.md               测试总驱动：API 验证（委托 api-test）+ test/cases/ 场景用例
@@ -355,6 +357,41 @@ software-engineering-skills/
 6. 循环回到第 2 步，直到队列清空
 
 完成后输出汇总：处理总数、FIXED 数量、FAILED 数量及原因。
+
+---
+
+### `/aicase`
+
+连接 aibug Bug 管理系统，按时间拉取 Bug 清单（`GET /bugs/since`），逐个分析是否值得沉淀为回归测试用例；值得转化的在 `test/cases/` 生成标准用例文件。必须配合 aibug 系统使用。
+
+**用法**
+
+```bash
+/aicase --host=http://your-server:8082 \
+  --username=admin --password=secret \
+  --since=昨天                             # 拉取昨天起的 Bug 并转化
+/aicase --host=... --username=... --password=... \
+  --project-id=1 --since=2026-08-26        # 指定项目与日期
+/aicase -h                                 # 查看帮助
+```
+
+**参数**
+
+| 参数 | 说明 |
+|---|---|
+| `--host` / `--username` / `--password` | aibug 访问参数，同 /aibug（必填） |
+| `--project-id` | 项目 ID（可选，取回后按 projectId 客户端筛选） |
+| `--since` | `今天` / `昨天` / `前天` / `YYYY-MM-DD` / `YYYY-MM-DD_HH:MM:SS`，默认今天；调用 API 前统一转换为 `yyyy-MM-dd_HH:mm:ss`（如 `2026-08-26_00:00:00`） |
+
+**工作流程**
+
+1. 登录获取 token → `GET {host}/aibug/api/bugs/since?since=<时间>` 拉取 Bug 清单
+2. 去重：已有用例元信息含 `aibug Bug #<id>` 的跳过
+3. 逐个判定：功能/接口/业务流程类 → 转化；文案样式微调、一次性数据、环境配置类 → 跳过并记录原因
+4. 生成 `test/cases/TEST-CASE-{4位编号}.md`：**优先级固定 P1**，元信息追加 `生成来源：AICASE SKILL（aibug Bug #<id>）`
+5. 重建 `test/cases/case-summary.md`（AICASE 生成的用例名称后缀 `（AICASE）`）
+
+本 skill 只读 aibug 数据，不修改任何 Bug 状态；生成后可用 `/do-test --task=cases` 执行。
 
 ---
 
