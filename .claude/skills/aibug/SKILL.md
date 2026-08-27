@@ -156,6 +156,12 @@ curl -s "{HOST}/aibug/api/bugs/next?projectId={PROJECT_ID}" \
 
 **响应**（无更多 Bug）：返回 HTTP 4xx 或空对象。遇到此情况，**退出循环**，向用户报告"所有 Bug 已处理完毕"。
 
+**项目校验（必做）**：取到 Bug 后立即将响应中的 `projectId` 与命令行 `PROJECT_ID` 比对：
+
+- 一致 → 进入 3.2；
+- 不一致 → **不更新该 Bug 状态**，记台账 `#<id> → 项目校验不通过（projectId=<实际值> ≠ <PROJECT_ID>）`，跳过该 Bug，回到本步取下一个；
+- 若再次取回同一 Bug ID（服务端过滤异常），**立即终止循环**并向用户告警，该记录列入完成汇总的"项目校验不通过"清单，防止死循环。
+
 ### 3.2 标记为 IN_PROGRESS
 
 获取到 Bug 后，立即更新状态，防止被重复领取：
@@ -241,6 +247,7 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 共处理 Bug：N 个
   - FIXED：N 个
   - FAILED：N 个（附各 Bug ID 和失败原因）
+  - 项目校验不通过：N 个（逐条列出 #id 与实际 projectId；无则 0）
 
 队列已清空，无更多 PENDING Bug。
 ```

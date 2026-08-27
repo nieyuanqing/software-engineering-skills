@@ -351,12 +351,13 @@ software-engineering-skills/
 
 1. `POST {host}/aibug/api/auth/login` — 登录获取 token
 2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug
-3. 标记为 `IN_PROGRESS`，防止重复领取
-4. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码
-5. 修复成功 → `FIXED`；无法修复 → `FAILED`（附失败原因）
-6. 循环回到第 2 步，直到队列清空
+3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总
+4. 标记为 `IN_PROGRESS`，防止重复领取
+5. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码
+6. 修复成功 → `FIXED`；无法修复 → `FAILED`（附失败原因）
+7. 循环回到第 2 步，直到队列清空
 
-完成后输出汇总：处理总数、FIXED 数量、FAILED 数量及原因。
+完成后输出汇总：处理总数、FIXED 数量、FAILED 数量及原因、项目校验不通过清单。
 
 ---
 
@@ -380,17 +381,18 @@ software-engineering-skills/
 | 参数 | 说明 |
 |---|---|
 | `--host` / `--username` / `--password` | aibug 访问参数，同 /aibug（必填） |
-| `--project-id` | 项目 ID（**必填**，未指定直接报错；取回后按 projectId 客户端筛选） |
-| `--reporter` | Bug 提报者用户名（可选，服务端按提报人过滤，如 `--reporter=lvtao`；对应 API 查询参数 `user`） |
+| `--project-id` | 项目 ID（**必填**，未指定直接报错；作为 API 查询参数 `project-id` 传入，服务端必填并按其过滤） |
+| `--reporter` | Bug 提报者用户名（可选，服务端按提报人过滤，如 `--reporter=lvtao`；对应 API 查询参数 `reporter`） |
 | `--since` | `今天` / `昨天` / `前天` / `YYYY-MM-DD` / `YYYY-MM-DD_HH:MM:SS`，默认今天；调用 API 前统一转换为 `yyyy-MM-dd_HH:mm:ss`（如 `2026-08-26_00:00:00`） |
 
 **工作流程**
 
-1. 登录获取 token → `GET {host}/aibug/api/bugs/since?since=<时间>` 拉取 Bug 清单
-2. 去重：已有用例元信息含 `aibug Bug #<id>` 的跳过
-3. 逐个判定：功能/接口/业务流程类 → 转化；文案样式微调、一次性数据、环境配置类 → 跳过并记录原因
-4. 生成 `test/cases/TEST-CASE-{4位编号}.md`：**优先级固定 P1**，元信息追加 `生成来源：AICASE SKILL（aibug Bug #<id>）`
-5. 重建 `test/cases/case-summary.md`（AICASE 生成的用例名称后缀 `（AICASE）`）
+1. 登录获取 token → `GET {host}/aibug/api/bugs/since?since=<时间>&project-id=<项目ID>` 拉取 Bug 清单
+2. 逐条强制校验：`projectId` 与 `--project-id` 不符即跳过；指定 `--reporter` 时还校验提报者；跳过记录在最终汇总逐条列出
+3. 去重：已有用例元信息含 `aibug Bug #<id>` 的跳过
+4. 逐个判定：功能/接口/业务流程类 → 转化；文案样式微调、一次性数据、环境配置类 → 跳过并记录原因
+5. 生成 `test/cases/TEST-CASE-{4位编号}.md`：**优先级固定 P1**，元信息追加 `生成来源：AICASE SKILL（aibug Bug #<id>）`
+6. 重建 `test/cases/case-summary.md`（AICASE 生成的用例名称后缀 `（AICASE）`）
 
 本 skill 只读 aibug 数据，不修改任何 Bug 状态；生成后可用 `/do-test --task=cases` 执行。
 

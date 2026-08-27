@@ -24,11 +24,11 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
   --host=URL          aibug 系统 Base URL（同 /aibug，如 --host=http://your-server:8082）
   --username=NAME     登录账号
   --password=PASS     登录密码
-  --project-id=N      项目 ID（必填，未指定直接报错；接口不按项目过滤，
-                      取回后按 projectId 客户端筛选）
+  --project-id=N      项目 ID（必填，未指定直接报错；作为 API 查询参数
+                      project-id 传入，服务端必填并按其过滤）
   --reporter=NAME     Bug 提报者用户名（可选，服务端按提报人过滤，
                       如 --reporter=lvtao；不传则不按提报人过滤；
-                      对应 API 查询参数 user）
+                      对应 API 查询参数 reporter）
   --since=TIME        Bug 起始时间（按创建时间），支持：
                         今天 | 昨天 | 前天 | YYYY-MM-DD | YYYY-MM-DD_HH:MM:SS
                       默认: 今天。调用 API 时统一转换为 yyyy-MM-dd_HH:mm:ss 格式
@@ -67,8 +67,8 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
 | `--host=URL` | `HOST`（必填，无默认值） |
 | `--username=NAME` | `USERNAME`（必填，无默认值） |
 | `--password=PASS` | `PASSWORD`（必填，无默认值） |
-| `--project-id=N` | `PROJECT_ID`（**必填**，无默认值；取回后按 projectId 客户端筛选） |
-| `--reporter=NAME` | `REPORTER`（可选；Bug 提报者用户名，服务端过滤，对应 API 查询参数 `user`） |
+| `--project-id=N` | `PROJECT_ID`（**必填**，无默认值；作为 API 查询参数 `project-id` 传入，服务端必填） |
+| `--reporter=NAME` | `REPORTER`（可选；Bug 提报者用户名，服务端过滤，对应 API 查询参数 `reporter`） |
 | `--since=TIME` | `SINCE`（默认 `今天`） |
 
 ### 1.2 参数校验与补齐
@@ -115,22 +115,29 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 ## 四、获取 Bug 清单
 
 ```bash
-curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}" \
+curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}&project-id={PROJECT_ID}" \
   -H "Authorization: Bearer <token>"
 ```
 
-指定了 `REPORTER` 时在查询串追加 `&user={REPORTER}`（API 查询参数名为 `user`，服务端按提报人过滤）：
+指定了 `REPORTER` 时再追加 `&reporter={REPORTER}`（服务端按提报人过滤）：
 
 ```bash
-curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}&user={REPORTER}" \
+curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}&project-id={PROJECT_ID}&reporter={REPORTER}" \
   -H "Authorization: Bearer <token>"
 ```
+
+`project-id` 是 **API 必填参数**（缺失返回 400 `{"error":"project-id为必填参数"}`），与本 skill 的 `--project-id` 必填校验一致。
 
 **响应**：Bug 对象数组（字段同 /bugs/next：`id`、`content`、`fileUrls`、`status`、`projectId`、`createdAt`、`username`（提报人）等）。
 
 **响应瘦身**（必做）：每个 Bug 只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`projectId`、`createdAt`、`username`；禁止把完整 JSON 原文粘进对话。
 
-- 按 `PROJECT_ID` 过滤：只保留 `projectId` 匹配的 Bug；过滤后为空 → 输出"该项目在该时间段内无 Bug"后结束。
+- **逐条强制校验**（必做，服务端过滤之外的兜底双保险）：对返回的每个 Bug 依次校验——
+  - 项目校验：`projectId` 必须等于 `PROJECT_ID`；
+  - 提报人校验（仅指定了 `REPORTER` 时）：`username`（提报者）必须等于 `REPORTER`；
+  - 任一不通过 → 该记录**跳过**（不进入判定与生成流程），记一行台账
+    `#<id> → 校验不通过（projectId=<实际值> / reporter=<实际值>）`，并在完成汇总中逐条列出。
+- 清单为空或全部校验不通过 → 输出"该项目在该时间段内无可处理 Bug"后结束。
 - 响应为 `{"error": ...}`（时间格式非法等）→ 停止并报告；清单为空数组 → 直接输出"该时间段内无 Bug"后结束。
 - 向用户输出一行台账表头：`共拉取 N 个 Bug（since=<时间值>[，reporter=<提报人>]）`。
 
@@ -215,6 +222,8 @@ grep -rl "aibug Bug #<id>" test/cases/ 2>/dev/null
       ...
   - 跳过（已有 CASE）：b 个
   - 跳过（不宜转化）：c 个（逐条：#id 原因）
+  - 校验不通过：d 个（逐条：#id 原因，如 projectId=<实际值>≠<PROJECT_ID>、
+    reporter=<实际值>≠<REPORTER>）
 
 用例清单：test/cases/case-summary.md
 执行方式：/do-test --task=cases（本批用例均为 P1）
