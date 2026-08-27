@@ -24,8 +24,8 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
   --host=URL          aibug 系统 Base URL（同 /aibug，如 --host=http://your-server:8082）
   --username=NAME     登录账号
   --password=PASS     登录密码
-  --project-id=N      项目 ID（可选；接口不按项目过滤，取回后按 projectId 客户端筛选，
-                      不传则保留全部可见 Bug）
+  --project-id=N      项目 ID（必填，未指定直接报错；接口不按项目过滤，
+                      取回后按 projectId 客户端筛选）
   --since=TIME        Bug 起始时间（按创建时间），支持：
                         今天 | 昨天 | 前天 | YYYY-MM-DD | YYYY-MM-DD_HH:MM:SS
                       默认: 今天。调用 API 时统一转换为 yyyy-MM-dd_HH:mm:ss 格式
@@ -43,8 +43,9 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
   6. 重建 test/cases/case-summary.md（AICASE 生成的用例名称后缀（AICASE））
 
 示例
-  /aicase --host=http://your-server:8082 --username=admin --password=secret
-  /aicase --host=http://your-server:8082 --username=admin --password=secret --since=昨天
+  /aicase --host=http://your-server:8082 --username=admin --password=secret --project-id=1
+  /aicase --host=http://your-server:8082 --username=admin --password=secret \
+      --project-id=1 --since=昨天
   /aicase --host=http://your-server:8082 --username=admin --password=secret \
       --project-id=1 --since=2026-08-26
   /aicase -h
@@ -61,12 +62,16 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
 | `--host=URL` | `HOST`（必填，无默认值） |
 | `--username=NAME` | `USERNAME`（必填，无默认值） |
 | `--password=PASS` | `PASSWORD`（必填，无默认值） |
-| `--project-id=N` | `PROJECT_ID`（可选，客户端筛选） |
+| `--project-id=N` | `PROJECT_ID`（**必填**，无默认值；取回后按 projectId 客户端筛选） |
 | `--since=TIME` | `SINCE`（默认 `今天`） |
 
-### 1.2 交互询问缺失参数
+### 1.2 参数校验与补齐
 
-将所有未通过命令行提供的必填参数（HOST / USERNAME / PASSWORD）**一次性列出**统一询问；`PROJECT_ID`、`SINCE` 缺失时使用默认（不过滤 / 今天），不强制询问。参数确定后向用户回显（密码替换为 `****`），确认后开始执行。
+- **`PROJECT_ID` 必须通过 `--project-id=N` 显式指定**：未指定时**直接报错终止**（输出 `错误：缺少 --project-id=N，必须指定项目 ID`），不交互询问、不继续执行。
+- 其余必填参数（HOST / USERNAME / PASSWORD）缺失时**一次性列出**统一交互询问。
+- `SINCE` 缺失时使用默认 `今天`，不强制询问。
+
+参数确定后向用户回显（密码替换为 `****`），确认后开始执行。
 
 ---
 
@@ -112,7 +117,7 @@ curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}" \
 
 **响应瘦身**（必做）：每个 Bug 只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`projectId`、`createdAt`；禁止把完整 JSON 原文粘进对话。
 
-- 指定了 `PROJECT_ID` → 只保留 `projectId` 匹配的 Bug。
+- 按 `PROJECT_ID` 过滤：只保留 `projectId` 匹配的 Bug；过滤后为空 → 输出"该项目在该时间段内无 Bug"后结束。
 - 响应为 `{"error": ...}`（时间格式非法等）→ 停止并报告；清单为空数组 → 直接输出"该时间段内无 Bug"后结束。
 - 向用户输出一行台账表头：`共拉取 N 个 Bug（since=<时间值>）`。
 

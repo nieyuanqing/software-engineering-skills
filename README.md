@@ -369,7 +369,7 @@ software-engineering-skills/
 ```bash
 /aicase --host=http://your-server:8082 \
   --username=admin --password=secret \
-  --since=昨天                             # 拉取昨天起的 Bug 并转化
+  --project-id=1 --since=昨天              # 拉取昨天起的 Bug 并转化
 /aicase --host=... --username=... --password=... \
   --project-id=1 --since=2026-08-26        # 指定项目与日期
 /aicase -h                                 # 查看帮助
@@ -380,7 +380,7 @@ software-engineering-skills/
 | 参数 | 说明 |
 |---|---|
 | `--host` / `--username` / `--password` | aibug 访问参数，同 /aibug（必填） |
-| `--project-id` | 项目 ID（可选，取回后按 projectId 客户端筛选） |
+| `--project-id` | 项目 ID（**必填**，未指定直接报错；取回后按 projectId 客户端筛选） |
 | `--since` | `今天` / `昨天` / `前天` / `YYYY-MM-DD` / `YYYY-MM-DD_HH:MM:SS`，默认今天；调用 API 前统一转换为 `yyyy-MM-dd_HH:mm:ss`（如 `2026-08-26_00:00:00`） |
 
 **工作流程**

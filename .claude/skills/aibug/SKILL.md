@@ -24,7 +24,7 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
   --host=URL          aibug 系统 Base URL（如 --host=http://your-server:8082）
   --username=NAME     登录账号
   --password=PASS     登录密码
-  --project-id=N      项目 ID（如 --project-id=1）
+  --project-id=N      项目 ID（必填，未指定直接报错；如 --project-id=1）
   -h, --help          显示本帮助
 
 工作流程
@@ -61,16 +61,16 @@ Bug 字段说明
 | `--password=PASS` | `PASSWORD`（必填，无默认值） |
 | `--project-id=N` | `PROJECT_ID`（必填，无默认值） |
 
-### 1.2 交互询问缺失参数
+### 1.2 参数校验与补齐
 
-将所有未通过命令行提供的必填参数**一次性列出**，统一询问：
+- **`PROJECT_ID` 必须通过 `--project-id=N` 显式指定**：未指定时**直接报错终止**（输出 `错误：缺少 --project-id=N，必须指定项目 ID`），不交互询问、不继续执行。
+- 其余必填参数缺失时**一次性列出**，统一交互询问：
 
 | 参数 | 说明 |
 |---|---|
 | `HOST` | aibug 系统 Base URL，如 `http://your-server:8082` |
 | `USERNAME` | 登录账号 |
 | `PASSWORD` | 登录密码 |
-| `PROJECT_ID` | 项目 ID |
 
 所有参数确定后，**向用户回显参数列表**（密码替换为 `****`），确认后开始执行。
 
@@ -250,6 +250,7 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 ## 五、注意事项
 
 - 所有参数（HOST、USERNAME、PASSWORD、PROJECT_ID）均无默认值，必须由用户在每次调用时提供。
+- `PROJECT_ID` 必须通过命令行 `--project-id=N` 传入；缺失时直接报错终止，不做交互询问兜底。
 - 密码仅用于登录请求，不写入任何文件，不在日志中明文输出。
 - `FAILED` 状态必须提供 `failReason`，否则 API 会返回错误。
 - 服务端对 `status` 做枚举校验（PENDING / IN_PROGRESS / FIXED / FAILED / RESOLVED / CLOSED），非法值返回 HTTP 400 及 `{"error": ...}`；每次 PUT 后必须检查响应中的 `error` 字段，出现则视为更新失败。
