@@ -381,7 +381,7 @@ software-engineering-skills/
 |---|---|
 | `--host` / `--username` / `--password` | aibug 访问参数，同 /aibug（必填） |
 | `--project-id` | 项目 ID（**必填**，未指定直接报错；取回后按 projectId 客户端筛选） |
-| `--user` | 提报 Bug 的用户名（可选，服务端按提报人过滤，如 `--user=lvtao`） |
+| `--reporter` | Bug 提报者用户名（可选，服务端按提报人过滤，如 `--reporter=lvtao`；对应 API 查询参数 `user`） |
 | `--since` | `今天` / `昨天` / `前天` / `YYYY-MM-DD` / `YYYY-MM-DD_HH:MM:SS`，默认今天；调用 API 前统一转换为 `yyyy-MM-dd_HH:mm:ss`（如 `2026-08-26_00:00:00`） |
 
 **工作流程**
