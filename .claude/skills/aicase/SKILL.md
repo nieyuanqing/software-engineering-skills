@@ -1,6 +1,6 @@
 ---
 name: aicase
-description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm:ss 接口按时间拉取 Bug 清单，逐个分析是否需要转化为回归测试用例，在 test/cases/ 生成 TEST-CASE-{4位编号}.md（优先级固定 P1，元信息标记"生成来源：AICASE SKILL"）并重建 case-summary.md。时间参数支持 今天/昨天/前天 或日期，调用 API 前统一转换为 yyyy-MM-dd_HH:mm:ss。必须配合 aibug 系统使用。支持 /aicase -h 查看帮助。
+description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm:ss 接口按时间拉取 Bug 清单，逐个分析是否需要转化为回归测试用例，在 test/cases/ 生成 TEST-CASE-{4位编号}.md（优先级固定 P1，元信息标记"生成来源：AICASE SKILL"）并重建 case-summary.md。时间参数支持 今天/昨天/前天 或日期，调用 API 前统一转换为 yyyy-MM-dd_HH:mm:ss；可选 --user 按提报人过滤。必须配合 aibug 系统使用。支持 /aicase -h 查看帮助。
 ---
 
 # aicase
@@ -26,6 +26,8 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
   --password=PASS     登录密码
   --project-id=N      项目 ID（必填，未指定直接报错；接口不按项目过滤，
                       取回后按 projectId 客户端筛选）
+  --user=NAME         提报 Bug 的用户名（可选，服务端按提报人过滤，
+                      如 --user=lvtao；不传则不按提报人过滤）
   --since=TIME        Bug 起始时间（按创建时间），支持：
                         今天 | 昨天 | 前天 | YYYY-MM-DD | YYYY-MM-DD_HH:MM:SS
                       默认: 今天。调用 API 时统一转换为 yyyy-MM-dd_HH:mm:ss 格式
@@ -48,6 +50,8 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
       --project-id=1 --since=昨天
   /aicase --host=http://your-server:8082 --username=admin --password=secret \
       --project-id=1 --since=2026-08-26
+  /aicase --host=http://your-server:8082 --username=admin --password=secret \
+      --project-id=1 --user=lvtao --since=昨天
   /aicase -h
 ```
 
@@ -63,6 +67,7 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
 | `--username=NAME` | `USERNAME`（必填，无默认值） |
 | `--password=PASS` | `PASSWORD`（必填，无默认值） |
 | `--project-id=N` | `PROJECT_ID`（**必填**，无默认值；取回后按 projectId 客户端筛选） |
+| `--user=NAME` | `USER`（可选；按提报 Bug 的用户名过滤，服务端生效） |
 | `--since=TIME` | `SINCE`（默认 `今天`） |
 
 ### 1.2 参数校验与补齐
@@ -113,13 +118,20 @@ curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}" \
   -H "Authorization: Bearer <token>"
 ```
 
-**响应**：Bug 对象数组（字段同 /bugs/next：`id`、`content`、`fileUrls`、`status`、`projectId`、`createdAt` 等）。
+指定了 `USER` 时在查询串追加 `&user={USER}`（服务端按提报人过滤）：
 
-**响应瘦身**（必做）：每个 Bug 只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`projectId`、`createdAt`；禁止把完整 JSON 原文粘进对话。
+```bash
+curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}&user={USER}" \
+  -H "Authorization: Bearer <token>"
+```
+
+**响应**：Bug 对象数组（字段同 /bugs/next：`id`、`content`、`fileUrls`、`status`、`projectId`、`createdAt`、`username`（提报人）等）。
+
+**响应瘦身**（必做）：每个 Bug 只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`projectId`、`createdAt`、`username`；禁止把完整 JSON 原文粘进对话。
 
 - 按 `PROJECT_ID` 过滤：只保留 `projectId` 匹配的 Bug；过滤后为空 → 输出"该项目在该时间段内无 Bug"后结束。
 - 响应为 `{"error": ...}`（时间格式非法等）→ 停止并报告；清单为空数组 → 直接输出"该时间段内无 Bug"后结束。
-- 向用户输出一行台账表头：`共拉取 N 个 Bug（since=<时间值>）`。
+- 向用户输出一行台账表头：`共拉取 N 个 Bug（since=<时间值>[，user=<提报人>]）`。
 
 ---
 
