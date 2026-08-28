@@ -9,7 +9,7 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
 
 **触发条件**：用户要求自动修复 Bug、接入 aibug 系统，或说"开始修 Bug"。
 
-> **执行方式：必须串行执行，禁止并行。** 同一时刻只允许一个本 skill 实例；Bug 严格逐个处理，下一个 Bug 必须在上一个完成状态回传（FIXED/FAILED）并回读确认后才可开始。禁止并行启动多个实例、多个子智能体同时修复不同 Bug，也禁止与 /aicase、/do-test 并发运行。
+> **执行方式：必须串行执行，禁止并行。** 同一时刻只允许一个本 skill 实例；**每条 Bug 通过子 agent 处理，严格逐条串行**——上一条 Bug 完成状态回传（FIXED/FAILED）并回读确认后，才可为下一条 Bug 启动子 agent。禁止并行启动多个实例、并行启动多个子 agent 同时处理不同 Bug，也禁止与 /aicase、/do-test 并发运行。
 
 ---
 
@@ -191,6 +191,8 @@ curl -s "{HOST}/aibug/api/bugs/{id}" \
 - 当前 Bug 卡：`#id`、`content`（原文）、附件完整地址（`{HOST}{fileUrls}`，如有）
 - 工程根路径，以及约束：最小化修复、只改代码不执行 git commit、**修复后必须验证**、无法修复时明确说明原因
 
+**串行约束（必做）**：每条 Bug 单独委托一个子智能体，同一时刻最多只有一个子智能体在运行；当前子智能体返回结果并记入台账后，才可为下一条 Bug 启动新的子智能体，禁止同时派出多个子智能体并行修复。
+
 要求子智能体以下列固定格式返回（≤5 行），主循环只将该结果记入台账，不追问细节：
 
 ```
@@ -264,5 +266,5 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - `FAILED` 状态必须提供 `failReason`，否则 API 会返回错误。
 - 服务端对 `status` 做枚举校验（PENDING / IN_PROGRESS / FIXED / FAILED / RESOLVED / CLOSED），非法值返回 HTTP 400 及 `{"error": ...}`；每次 PUT 后必须检查响应中的 `error` 字段，出现则视为更新失败。
 - 每次修复前先标记 `IN_PROGRESS`，确保同一 Bug 不被并发处理。
-- **必须串行执行**：本 skill 全程单实例、逐个 Bug 处理，禁止并行（多实例、多子智能体同时修复、与 /aicase 或 /do-test 并发均不允许）；用户要求并行时应明确拒绝并说明该约束。
+- **必须串行执行**：本 skill 全程单实例、每条 Bug 委托子 agent 逐条串行处理，禁止并行（多实例、多个子 agent 同时处理多条 Bug、与 /aicase 或 /do-test 并发均不允许）；用户要求并行时应明确拒绝并说明该约束。
 - 本 skill 仅修改代码文件，不执行 `git commit`，由用户决定是否提交修复结果。
