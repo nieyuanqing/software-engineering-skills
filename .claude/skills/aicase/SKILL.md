@@ -9,6 +9,8 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
 
 **触发条件**：用户要求把 aibug 的 Bug 转化为测试用例、根据近期 Bug 补充回归用例，或直接输入 /aicase。
 
+> **执行方式：必须串行执行，禁止并行。** 同一时刻只允许一个本 skill 实例；Bug 严格逐个判定与生成（CASE 编号按序分配，禁止并发写入）。禁止并行启动多个实例、多个子智能体同时生成用例，也禁止与 /aibug、/do-test 并发运行。
+
 ---
 
 ## 零、参数处理
@@ -238,3 +240,4 @@ grep -rl "aibug Bug #<id>" test/cases/ 2>/dev/null
 - CASE 内容不得写入真实凭证；附件截图仅用于理解 Bug，不落盘到工程。
 - 只新增用例文件与重建 `case-summary.md`，不修改已有用例；不执行 `git commit`，由用户决定是否提交。
 - 本 skill 只读 aibug 数据（除登录外不发起任何写请求），不改变任何 Bug 状态。
+- **必须串行执行**：本 skill 全程单实例、逐个 Bug 判定与生成，禁止并行（多实例、多子智能体同时生成用例、与 /aibug 或 /do-test 并发均不允许）；用户要求并行时应明确拒绝并说明该约束。
