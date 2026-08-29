@@ -41,9 +41,10 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
   1. POST {host}/aibug/api/auth/login            登录，获取 token
   2. GET  {host}/aibug/api/bugs/since?since=...  获取指定时间起的 Bug 清单
   3. 去重：已有用例元信息含 "aibug Bug #<id>" 的 Bug 跳过
-  4. 逐个判定是否值得转化为回归用例：功能/接口/业务流程类转化；
+  4. 逐个判定+生成（合并为一次子 agent 调用，Bug 详情由子 agent 自行获取，
+     主循环只持有 id 清单）：功能/接口/业务流程类转化；
      文案/样式微调、一次性数据、环境配置类跳过
-  5. 需转化的逐个生成 test/cases/TEST-CASE-{4位编号}.md：
+  5. 需转化的由子 agent 写入 test/cases/TEST-CASE-{4位编号}.md：
      优先级固定 P1，元信息追加 "生成来源：AICASE SKILL（aibug Bug #<id>）"
   6. 重建 test/cases/case-summary.md（AICASE 生成的用例名称后缀（AICASE））
 
@@ -132,7 +133,7 @@ curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}&project-id={PROJECT
 
 **响应**：Bug 对象数组（字段同 /bugs/next：`id`、`content`、`fileUrls`、`status`、`projectId`、`createdAt`、`username`（提报人）等）。
 
-**响应瘦身**（必做）：每个 Bug 只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`projectId`、`createdAt`、`username`；禁止把完整 JSON 原文粘进对话。
+**响应瘦身**（必做）：解析响应时每个 Bug 只读取 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`projectId`、`createdAt`、`username` 字段；禁止把完整 JSON 原文粘进对话。**逐条校验（见下）完成后，`content` 等长字段一律用后即弃，主循环最终只保留通过校验的 `id` 清单**——每条 Bug 的完整内容由处理该 Bug 的子 agent 自行通过 `GET {HOST}/aibug/api/bugs/{id}` 获取，主循环不转述、不持有。
 
 - **逐条强制校验**（必做，服务端过滤之外的兜底双保险）：对返回的每个 Bug 依次校验——
   - 项目校验：`projectId` 必须等于 `PROJECT_ID`；
@@ -157,28 +158,27 @@ grep -rl "aibug Bug #<id>" test/cases/ 2>/dev/null
 
 命中 → 该 Bug 记 `跳过（已有 CASE: <文件名>）`，不再处理。
 
-### 5.2 转化判定标准
+### 5.2 转化判定标准（写入子 agent prompt，由子 agent 执行判定）
 
 **生成 CASE**（同时满足）：
 - Bug 指向可复现的功能行为：接口报错/返回数据错误、业务规则错误、流程中断、权限异常、状态流转错误等
 - 能整理成可执行、可断言的步骤（API / Playwright UI / 人工）
 
-**跳过**（记录原因，一行台账）：
+**跳过**（返回 SKIPPED + 原因）：
 - 纯文案错别字、样式/像素级微调
 - 一次性数据订正、环境/配置问题
 - 描述过于模糊，无法形成可执行步骤
 - 与现有用例场景实质重复（即使未命中 5.1 的字面去重）
 
-判定时可读附件截图（`{HOST}{fileUrls}`）与工程代码辅助理解，但只截取相关片段。
+### 5.3 判定 + 生成（合并为一次子 agent 调用）
 
-### 5.3 生成 CASE（子智能体隔离）
+主循环先分配编号：扫描 `test/cases/TEST-CASE-*.md` 现有最大编号，加上本轮已分配数，取下一个 4 位编号（无文件从 `0001` 起）。**主循环只做去重、分配编号、调度与记台账，不读 Bug 全文、不做转化判定**——判定与生成合并为一次子 agent 调用。
 
-主循环先分配编号：扫描 `test/cases/TEST-CASE-*.md` 现有最大编号，加上本轮已分配数，取下一个 4 位编号（无文件从 `0001` 起）。
+**默认委托子智能体**（Agent 工具，subagent_type 用 general-purpose），prompt 只包含：
 
-**默认委托子智能体**（Agent 工具，subagent_type 用 general-purpose）写入用例文件，prompt 只包含：
-
-- 当前 Bug 卡：`#id`、`content`（原文）、附件完整地址（如有）
+- 当前 Bug `#id` + 登录 token + 取详情命令：`GET {HOST}/aibug/api/bugs/{id}`（由子 agent 自行获取 `content`、附件地址等原文，附件截图 `{HOST}{fileUrls}` 可读）
 - 工程根路径、目标文件路径 `test/cases/TEST-CASE-<编号>.md`
+- 5.2 转化判定标准（原文写入 prompt，不满足标准直接返回 SKIPPED）
 - 用例模板要求：与 /new-test-case 完全一致（元信息/前置条件/测试数据/步骤表/结果验证/善后清理），步骤类型 API / UI(Playwright) / 人工
 - 固定约束：**优先级一律 P1**；元信息表在标准四行后追加一行：
 
@@ -186,9 +186,9 @@ grep -rl "aibug Bug #<id>" test/cases/ 2>/dev/null
   | 生成来源 | AICASE SKILL（aibug Bug #<id>） |
   ```
 
-- 不写真实账号密码（用"测试账号"等占位）、不执行 git commit、可结合工程代码（Controller、src/web、test/api/url-list.md）确定真实 API 路径与页面选择器
+- 不写真实账号密码（用"测试账号"等占位）、不执行 git commit、可结合工程代码（Controller、src/web、test/api/url-list.md）确定真实 API 路径与页面选择器；判定时可读工程代码，但只截取相关片段
 
-**串行约束（必做）**：每条 Bug 单独委托一个子智能体，同一时刻最多只有一个子智能体在运行；当前子智能体返回结果并记入台账后，才可为下一条 Bug 启动新的子智能体，禁止同时派出多个子智能体并行生成。
+**串行约束（必做）**：每条 Bug 单独委托一个子智能体，同一时刻最多只有一个子智能体在运行；当前子智能体返回结果并记入台账后，才可为下一条 Bug 启动新的子智能体，禁止同时派出多个子智能体并行生成。**干净上下文（防串味）**：子智能体 prompt 只含当前 `#id`，禁止携带之前任何 Bug 的内容、判定结论或已生成用例信息。
 
 子智能体以下列固定格式返回（≤3 行），主循环记入台账：
 
@@ -198,7 +198,9 @@ grep -rl "aibug Bug #<id>" test/cases/ 2>/dev/null
 说明: <一句话场景摘要或跳过原因>
 ```
 
-**回退方式**（无法使用子智能体时）：主循环内联生成，仍须遵守响应瘦身与模板要求。
+**回退方式**（无法使用子智能体时）：主循环内联执行"取详情→判定→生成"，仍须遵守响应瘦身与模板要求，处理完每条 Bug 后 `content` 用后即弃。
+
+**定期压缩**（必做）：每处理完 5 条 Bug，或感知上下文占用约 60% 时，执行一次 `/compact`，明确要求保留：连接参数与 token、id 待处理清单、台账表、下一个待分配编号。
 
 ### 5.4 台账
 
@@ -208,7 +210,7 @@ grep -rl "aibug Bug #<id>" test/cases/ 2>/dev/null
 
 ## 六、重建 case-summary.md（必做）
 
-全部 Bug 处理完后，按 /new-test-case 第四节的规则**重建** `test/cases/case-summary.md`（扫描全部历史用例，覆盖式更新），并遵循：
+全部 Bug 处理完后，按 /new-test-case 第四节的规则**重建** `test/cases/case-summary.md`（扫描全部历史用例，覆盖式更新）。**上下文控制（必做）**：每个用例只通过 `grep -E "^# TEST-CASE|用例编号|生成来源|优先级|测试类型"` 与步骤表的"操作"列提取 名称/来源/优先级/流程，禁止把用例全文读入上下文；步骤流程压缩为一行（≤60 字）。并遵循：
 
 - 元信息含 `生成来源：AICASE SKILL` 的用例，**CASE 名称列追加后缀 `（AICASE）`**（如 `下单异常修复回归（AICASE）`）
 - 本 skill 生成的用例优先级固定为 `P1`

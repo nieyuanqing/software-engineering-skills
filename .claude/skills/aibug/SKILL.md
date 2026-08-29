@@ -104,22 +104,16 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 
 ### 执行过程输出要求（必做）
 
-每轮循环必须向用户**明文输出实际执行的调用命令**（占位符替换为真实值），包括：
-
-1. **取 Bug 命令**（3.1 执行时输出）：
+每轮循环对每个实际 API 调用向用户输出**一行**记录，只含 **方法 + 路径 + 结果**，禁止输出完整 curl 命令、请求头与 JSON 原文：
 
 ```
-[取 Bug] curl -s "{HOST}/aibug/api/bugs/next?projectId={PROJECT_ID}" -H "Authorization: Bearer ***"
+[取 Bug]     GET /aibug/api/bugs/next?projectId={PROJECT_ID} → 200，#<id>
+[回传状态]   PUT /aibug/api/bugs/{id}/status → 200，status=IN_PROGRESS
+[回读确认]   GET /aibug/api/bugs/{id} → 200，status=IN_PROGRESS
 ```
 
-2. **回传修复状态命令**（3.2 / 3.4 每次 PUT 执行时输出）：
-
-```
-[回传状态] curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" -H "Authorization: Bearer ***" -H "Content-Type: application/json" -d '{"status":"<实际状态>","projectId":{PROJECT_ID},...}'
-```
-
-- `{HOST}`、`{PROJECT_ID}`、`{id}` 均替换为真实值；token 一律显示为 `***`，禁止明文输出。
-- 输出命令后紧跟一行执行结果摘要（如 HTTP 状态与返回的 `status`/`error` 字段值）。
+- 路径中 `{PROJECT_ID}`、`{id}` 替换为真实值；token 与 Authorization 头一律不出现。
+- 非 200 或响应含 `error` 时在同一行追加一句话原因，不重试转述响应体。
 
 ### 上下文与权重控制（全程必做）
 
