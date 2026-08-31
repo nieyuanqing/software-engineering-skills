@@ -29,7 +29,7 @@
 | [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/` |
 | [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本 |
 | [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本 |
-| [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、v0 文档只读保护、禁止硬编码敏感信息） |
+| [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、飞书完成通知、v0 文档只读保护、禁止硬编码、commit 格式、CORS 走 nginx、三环境配置对齐、API 安全基线） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
 | [`/aicase`](#aicase) | 连接 aibug 系统，按时间拉取 Bug 清单，逐个分析转化为回归测试用例（test/cases/，P1，标记 AICASE SKILL 生成） |
 | [`/api‑test`](#api-test) | 全端（web 管理后台 / 小程序 / Android / iOS）扫描后端 API 生成 URL 清单，逐个验证 HTTP 200，非 200 与业务不合理处均定位修复 |
@@ -52,7 +52,8 @@ software-engineering-skills/
 └── .claude/skills/
     ├── aibug/SKILL.md                 连接 aibug 系统，自动循环修复 Bug
     ├── aicase/SKILL.md                拉取 aibug 近期 Bug，转化为回归测试用例（P1，AICASE 标记）
-    ├── common-rules/SKILL.md          通用行为规范（任务摘要、v0 文档保护、禁止硬编码）
+    ├── common-rules/SKILL.md          通用行为规范（九条：任务摘要、飞书通知、v0 保护、
+    │                                  禁止硬编码、commit 格式、CORS、三环境对齐、API 安全）
     ├── api-test/SKILL.md              全端扫描后端 API 生成 URL 清单，逐个验证 HTTP 200 并修复
     ├── do-test/SKILL.md               测试总驱动：API 验证（委托 api-test）+ test/cases/ 场景用例
     ├── new-test-case/SKILL.md         新增单个测试用例 TEST-CASE-{4位编号}.md 到 test/cases/
@@ -309,18 +310,39 @@ software-engineering-skills/
 
 ### `/common-rules`
 
-通用行为规范，调用后对当前会话的所有任务生效：
+通用行为规范，激活后对当前会话所有任务生效，共九条强制规范 + 全局时间规范：
 
-- **任务摘要**：每次任务完成后输出结果清单、影响范围（新增/修改/删除文件）、开始和结束时间
+- **任务摘要**：每次任务完成后输出中文结果清单、影响范围（新增/修改/删除文件、数据库变更、需人工跟进）、开始/结束时间与耗时
+- **全局时间**：所有时间按东八区（UTC+8）处理，默认格式 `YYYY-MM-DD HH:MM:SS`
+- **飞书完成通知**：任务摘要同步推送到飞书群机器人（参数可选，不配置或配置不全则静默跳过，见下）
 - **v0 文档保护**：工程根目录 `v0/` 下的原始产品设计文档只读，禁止修改（`src/web/v0/` 为 AI 生成代码目录，不受此限制）
 - **禁止硬编码**：密码、密钥、Token 等敏感信息必须通过环境变量或占位符处理
+- **commit 格式**：git commit message 必须为 `<类型>: <描述>` 结构化格式（feat/fix/refactor/docs/style/test/chore）
+- **CORS 走 nginx**：禁止在 Java 后端处理跨域，统一由 nginx 配置写入
 - **三环境配置对齐**：dev/test/prod 三套配置文件（env、nginx vhost、application yml）配置项集合必须保持对齐，新增/删除/更名配置项时三套同步变更，仅值可因环境不同
+- **API 安全基线**：对外 API 用不可预测的 code 代替自增主键 ID 标识资源（防枚举、防业务量泄露）；服务端必须做对象级授权，校验资源归属（防 IDOR 越权）
 
 **用法**
 
 ```bash
-/common-rules    # 激活通用规范，对后续所有任务生效
+/common-rules                    # 激活规范（不传飞书参数 = 不发送通知）
+/common-rules --feishu-webhook=https://open.feishu.cn/open-apis/bot/v2/hook/xxxx
+                                 # 激活并开启飞书完成通知
+/common-rules --feishu-webhook=URL --feishu-secret=CODE
+                                 # 机器人开启"加签"时须同时传 secret
+/common-rules -h                 # 查看帮助
 ```
+
+**飞书通知参数（均可选）**
+
+| 参数 | 说明 |
+|---|---|
+| `--feishu-webhook=URL` | 飞书群自定义机器人 Webhook 地址；不传则不发送通知 |
+| `--feishu-secret=CODE` | 机器人加签密钥；机器人开启加签时必传 |
+
+- 参数**不配置或配置不全**（缺 webhook，或机器人开启加签但缺 secret）→ 一律静默跳过，不报错、不阻断任务
+- 通知内容为任务摘要压缩版（时间 + 结果 + 影响范围，≤5 行）；发送失败只在摘要提示一句，不影响任务结论
+- 参数值仅会话内持有，禁止写入任何文件（与"禁止硬编码"规范联动）
 
 ---
 
