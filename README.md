@@ -29,7 +29,7 @@
 | [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/` |
 | [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本 |
 | [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本 |
-| [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、飞书完成通知、v0 文档只读保护、禁止硬编码、commit 格式、CORS 走 nginx、三环境配置对齐、API 安全基线） |
+| [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、人工待办按 @角色 分派、飞书结构化卡片通知、v0 文档只读保护、禁止硬编码、commit 格式、CORS 走 nginx、三环境配置对齐、API 安全基线） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
 | [`/aicase`](#aicase) | 连接 aibug 系统，按时间拉取 Bug 清单，逐个分析转化为回归测试用例（test/cases/，P1，标记 AICASE SKILL 生成） |
 | [`/api‑test`](#api-test) | 全端（web 管理后台 / 小程序 / Android / iOS）扫描后端 API 生成 URL 清单，逐个验证 HTTP 200，非 200 与业务不合理处均定位修复 |
@@ -52,8 +52,9 @@ software-engineering-skills/
 └── .claude/skills/
     ├── aibug/SKILL.md                 连接 aibug 系统，自动循环修复 Bug
     ├── aicase/SKILL.md                拉取 aibug 近期 Bug，转化为回归测试用例（P1，AICASE 标记）
-    ├── common-rules/SKILL.md          通用行为规范（九条：任务摘要、飞书通知、v0 保护、
-    │                                  禁止硬编码、commit 格式、CORS、三环境对齐、API 安全）
+    ├── common-rules/SKILL.md          通用行为规范（九条：任务摘要（含人工待办 @角色 分派）、
+    │                                  飞书结构化卡片通知、v0 保护、禁止硬编码、commit 格式、
+    │                                  CORS、三环境对齐、API 安全）
     ├── api-test/SKILL.md              全端扫描后端 API 生成 URL 清单，逐个验证 HTTP 200 并修复
     ├── do-test/SKILL.md               测试总驱动：API 验证（委托 api-test）+ test/cases/ 场景用例
     ├── new-test-case/SKILL.md         新增单个测试用例 TEST-CASE-{4位编号}.md 到 test/cases/
@@ -312,7 +313,8 @@ software-engineering-skills/
 
 通用行为规范，激活后对当前会话所有任务生效，共九条强制规范 + 全局时间规范：
 
-- **任务摘要**：每次任务完成后输出中文结果清单、影响范围（新增/修改/删除文件、数据库变更、需人工跟进）、开始/结束时间与耗时
+- **任务摘要**：每次任务完成后输出中文结果清单、影响范围（新增/修改/删除文件、数据库变更）、人工待办、开始/结束时间与耗时
+- **人工待办**：需要人介入的事项单独成板块，每条以 `@角色` 开头标明由谁处理——`@研发`/`@测试`/`@运维`/`@DBA`/`@产品`/`@安全`/`@运营`/`@销售`/`@CEO`（覆盖不到可自定义角色，禁止写真实人名）；条目 = 具体动作 + 触发条件/操作入口，无人工介入项时写 `- 无`，板块不得省略
 - **全局时间**：所有时间按东八区（UTC+8）处理，默认格式 `YYYY-MM-DD HH:MM:SS`
 - **飞书完成通知**：任务摘要同步推送到飞书群机器人（参数可选，不配置或配置不全则静默跳过，见下）
 - **v0 文档保护**：工程根目录 `v0/` 下的原始产品设计文档只读，禁止修改（`src/web/v0/` 为 AI 生成代码目录，不受此限制）
@@ -343,7 +345,8 @@ software-engineering-skills/
 - 参数**不配置或配置不全**（缺 webhook，或机器人开启加签但缺 secret）→ 一律静默跳过，不报错、不阻断任务
 - 通知一律为**结构化消息卡片**（`msg_type=interactive`，禁止自由文本段落），区块顺序固定：
   标题（状态图标 + 配色 green/orange/red/blue）→ 开始时间/结束时间/耗时 → 任务结果（≤5 条）
-  → 影响范围（新增/修改/删除文件、数据库变更、需人工跟进）→ 脚注（工程名）；正文 ≤800 字
+  → 影响范围（新增/修改/删除文件、数据库变更）→ 人工待办（逐条 `@角色` 开头，无则写"- 无"）
+  → 脚注（工程名）；正文 ≤800 字
 - 卡片因格式问题报错时，按同字段顺序回退为固定行文本重发一次；发送失败只在摘要提示一句，不影响任务结论
 - 参数值仅会话内持有，禁止写入任何文件（与"禁止硬编码"规范联动）
 
