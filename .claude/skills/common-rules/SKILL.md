@@ -1,6 +1,6 @@
 ---
 name: common-rules
-description: 通用行为规范，适用于所有任务：每次任务完成后输出中文结果清单、影响范围（含数据库变更维度）和开始/结束时间（摘要必须采用中文）；任务完成后向飞书机器人 webhook 发送结果通知（webhook 通过 skill 激活参数 --feishu-webhook 配置，禁止写入文件）；禁止修改工程根目录 v0/ 下的原始产品设计文档（只读，src/web/v0 代码目录除外）；禁止在代码、配置、脚本中硬编码任何敏感信息；git commit message 必须使用结构化格式；CORS 必须在 nginx 配置中实现，禁止在 Java 后端处理；dev/test/prod 三套配置文件（env、nginx、application）的配置项必须保持自动对齐；API 设计采用 code 代替自增主键 ID 标识资源（主键 ID 可猜测枚举，存在安全隐患）；服务端必须做对象级授权，校验资源归属，防 IDOR。
+description: 通用行为规范，适用于所有任务：每次任务完成后输出中文结果清单、影响范围（含数据库变更维度）和开始/结束时间（摘要必须采用中文）；任务完成后向飞书机器人 webhook 发送结果通知（按固定区块的结构化消息卡片发送，禁止自由文本段落；webhook 与加签密钥通过 skill 激活参数 --feishu-webhook/--feishu-secret 配置，禁止写入文件）；禁止修改工程根目录 v0/ 下的原始产品设计文档（只读，src/web/v0 代码目录除外）；禁止在代码、配置、脚本中硬编码任何敏感信息；git commit message 必须使用结构化格式；CORS 必须在 nginx 配置中实现，禁止在 Java 后端处理；dev/test/prod 三套配置文件（env、nginx、application）的配置项必须保持自动对齐；API 设计采用 code 代替自增主键 ID 标识资源（主键 ID 可猜测枚举，存在安全隐患）；服务端必须做对象级授权，校验资源归属，防 IDOR。
 ---
 
 # common-rules
@@ -136,7 +136,11 @@ description: 通用行为规范，适用于所有任务：每次任务完成后�
   发送规则：
     - 参数不配置或配置不全（缺 --feishu-webhook；或机器人开启加签但未传
       --feishu-secret）→ 一律不发送，静默跳过，不报错、不阻断任务
-    - 通知正文含：时间、任务结果、影响范围（含数据库变更），控制在 5 行内
+    - 消息格式固定为结构化卡片（msg_type=interactive），禁止自由文本段落，
+      区块顺序：标题（含状态图标 + 配色 green/orange/red/blue）→
+      开始时间/结束时间/耗时 → 任务结果（≤5 条）→ 影响范围（新增/修改/删除文件、
+      数据库变更、需人工跟进）→ 脚注（工程名）；正文 ≤800 字
+    - 卡片格式报错时回退一次到同字段顺序的固定行文本；失败只记一句话原因
     - 发送失败只在摘要"需人工跟进"提一句，不重试刷屏、不影响任务完成判定
     - 纯对话/查询类请求（无摘要输出）不发送通知
     - 回显命令时 webhook 地址脱敏（只显示到 /hook/ 前），通知中不带凭证
@@ -347,20 +351,64 @@ docs: 更新 README，补充 deploy.sh 能力说明
 
 **结果处理**：摘要末尾增加一行 `飞书通知：已发送 | 未配置（跳过） | 发送失败（<一句话原因>）`；发送失败最多重试一次，不影响任务完成判定。
 
-**发送方式**（Bash 执行，参数值直接内联到命令中；该值禁止落盘到任何文件，向用户回显时 webhook 只显示到 `/hook/` 前）：
+**消息格式（强制：结构化消息卡片 `msg_type: "interactive"`）**
+
+禁止发送无结构的自由文本段落。卡片固定五个区块，顺序与字段名不得增删改名：
+
+| 区块 | 卡片位置 | 内容规则 |
+|---|---|---|
+| 标题 | `header.title` | `<状态图标> <任务名>｜<一句话结论>`，≤40 字 |
+| 状态色 | `header.template` | `green` 全部成功 / `orange` 部分完成或待人工 / `red` 失败或有未解决问题 / `blue` 提示类（如仅报告、仅安装） |
+| 时间 | `elements[0]` `div.fields` | 三个 `is_short: true` 字段，顺序固定：`开始时间`、`结束时间`、`耗时`（东八区，取规范一摘要值） |
+| 任务结果 | `elements[2]` `div.text` | `**任务结果**` + ≤5 条 `- ` 列表，动词开头，一条一行 |
+| 影响范围 | `elements[3]` `div.text` | `**影响范围**` + 固定子项：`新增文件`、`修改文件`、`删除文件`、`数据库变更`、`需人工跟进`；无内容的子项写 `无`，取不到值的子项可省略 |
+| 脚注 | 末尾 `note` | `<工程名> · Qoder common-rules 规范九` |
+
+`elements[1]` 为 `hr` 分隔线；区块之间用 `hr` 分隔。内容约束：卡片正文合计 ≤800 字，每个 `div` ≤5 行，文件超过 5 个写成 `xxx、yyy 等 N 个`；禁止贴日志、代码、diff、token/密码等凭证。
+
+**发送方式**（参数值仅内联在命令中，禁止落盘写文件；回显给用户时 webhook 只显示到 `/hook/` 前）
+
+用 Bash 执行 `python3` 内联脚本组装 JSON（避免手工转义出错）：
 
 ```bash
-# 机器人开启加签时计算 timestamp + sign（飞书算法：HmacSHA256(key=secret, data=timestamp+"\n"+secret)，Base64）
-timestamp=$(date +%s)
-sign=$(printf "%s\n%s" "$timestamp" "<--feishu-secret 参数值>" \
-  | openssl dgst -sha256 -hmac "<--feishu-secret 参数值>" -binary | base64)
+python3 - <<'PY'
+import base64, hashlib, hmac, json, time, urllib.request
+WEBHOOK, SECRET = "<--feishu-webhook 参数值>", "<--feishu-secret 参数值>"
 
-curl -s -X POST "<--feishu-webhook 参数值>" -H "Content-Type: application/json" -d "{
-  \"timestamp\": \"$timestamp\", \"sign\": \"$sign\",
-  \"msg_type\": \"text\",
-  \"content\": {\"text\": \"<任务通知正文>\"}}"
+def f(k, v):  # 时间/统计字段
+    return {"is_short": True, "text": {"tag": "lark_md", "content": f"**{k}**\n{v}"}}
+def md(t):    # 文本区块
+    return {"tag": "div", "text": {"tag": "lark_md", "content": t}}
+
+card = {
+    "config": {"wide_screen_mode": True},
+    "header": {"title": {"tag": "plain_text", "content": "✅ <任务名>｜<一句话结论>"},
+               "template": "green"},
+    "elements": [
+        {"tag": "div", "fields": [f("开始时间", "YYYY-MM-DD HH:MM:SS"),
+                                  f("结束时间", "YYYY-MM-DD HH:MM:SS"),
+                                  f("耗时", "?秒")]},
+        {"tag": "hr"},
+        md("**任务结果**\n- <动词开头的要点，≤5 条>"),
+        md("**影响范围**\n- 新增文件：无\n- 修改文件：`<路径>`\n- 数据库变更：无\n- 需人工跟进：无"),
+        {"tag": "note", "elements": [{"tag": "plain_text",
+                                      "content": "<工程名> · Qoder common-rules 规范九"}]},
+    ],
+}
+payload = {"msg_type": "interactive", "card": card}
+if SECRET:  # 机器人开启加签时才有 timestamp + sign
+    ts = str(int(time.time()))
+    sign = base64.b64encode(hmac.new(SECRET.encode(), f"{ts}\n{SECRET}".encode(),
+                                     hashlib.sha256).digest()).decode()
+    payload.update(timestamp=ts, sign=sign)
+resp = json.loads(urllib.request.urlopen(
+    urllib.request.Request(WEBHOOK, json.dumps(payload).encode(),
+                           {"Content-Type": "application/json"}), timeout=20).read())
+print("code=", resp.get("code", resp.get("StatusCode")))
+PY
 ```
 
-- 未配置 `FEISHU_WEBHOOK_SECRET` 时去掉 `timestamp`、`sign` 两个字段
-- 通知正文取规范一摘要压缩版：任务名 + 结果要点 + 影响范围（新增/修改/数据库变更）+ 结束时间，≤5 行、≤800 字，禁止把大段日志/代码贴进通知
-- 成功判定：响应 `code`（或 `StatusCode`）为 0；失败时通知正文不回显响应原文，只记一句话原因
+- 未传 `--feishu-secret`（机器人未开加签）时，去掉 `timestamp`、`sign` 两个字段即可
+- 成功判定：响应 `code`（或 `StatusCode`）为 `0`
+- **回退**：卡片因格式/模板问题返回非 0（如 `code=19024` 等）时，用同样字段与顺序的固定行文本模板（`msg_type: "text"`）重发一次，字段顺序：标题行 → `结论` → `开始/结束/耗时` → `任务结果` → `影响范围` → `数据库变更` → `需人工跟进`；除此之外不重复发送，网络超时不重试刷屏
+- 卡片与回退文本均失败时：摘要 `飞书通知` 记 `发送失败（<一句话原因>）`，不回显响应原文，不影响任务完成判定
