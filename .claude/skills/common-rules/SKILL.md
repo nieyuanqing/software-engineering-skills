@@ -162,8 +162,13 @@ description: 通用行为规范，适用于所有任务：每次任务完成后�
       小标题符号 ### X ↔ **X** 与时间行一行 ↔ 三行；卡片内省略"飞书通知"状态行
     - 过长处理：单块按原顺序拆成多个 markdown 元素；整卡超飞书上限时拆多条卡片
       依次发送，标题追加 (1/2)、(2/2)，一字不减
-    - 卡片报错：结构类错误（elements 未嵌在 body 下、用了 horizontal_line 或 note）
-      先按 2.0 结构差异修正重发一次；仍失败降级为同字段顺序的固定行文本（同样照搬原文）
+    - 失败诊断：发送脚本必须同时打印 code 与 msg。卡片整体校验，任一元素不合法
+      就整卡被拒，外层只回 code=11246，真因在 msg 的 ErrCode/ErrPath/ErrorValue
+      （如 200861 unsupported tag note）。只打印 code 会把"元素用了已废弃的 note"
+      误判成"卡片没生效"
+    - 回退禁止跳级：结构类错误（elements 未嵌在 body 下、用了 horizontal_line 或
+      note 等）必须按 ErrPath 定位元素、照 2.0 结构差异修正后重发卡片；只有修正后
+      仍失败才降级为同字段顺序的固定行文本（同样照搬原文）
     - 发送失败只在摘要"飞书通知"行记一句原因，不重试刷屏、不影响任务完成判定；
       仅当确需人工修复机器人配置时，才在"人工待办"列一条 @研发 事项
     - 纯对话/查询类请求（无摘要输出）不发送通知
@@ -499,11 +504,23 @@ if SECRET:  # 机器人开启加签时才有 timestamp + sign
 resp = json.loads(urllib.request.urlopen(
     urllib.request.Request(WEBHOOK, json.dumps(payload).encode(),
                            {"Content-Type": "application/json"}), timeout=20).read())
-print("code=", resp.get("code", resp.get("StatusCode")))
+print("code=", resp.get("code", resp.get("StatusCode")),
+      "msg=", resp.get("msg") or resp.get("StatusMessage"))  # 必须一起打印 msg
 PY
 ```
 
 - 未传 `--feishu-secret`（机器人未开加签）时，去掉 `timestamp`、`sign` 两个字段即可
 - 成功判定：响应 `code`（或 `StatusCode`）为 `0`
-- **回退**：卡片返回非 `0` 时按两步降级——① 结构类错误（如 `200621 unknown property: elements`、`not support tag: horizontal_line`、`unsupported tag note`）先照上面"2.0 相对 1.0 的结构差异"修正字段后重发一次；② 仍失败则改用 `msg_type: "text"` 的固定行文本重发一次，字段顺序：标题行 → 开始时间/结束时间/耗时（三行）→ `**任务结果**` → `**影响范围**` → `**人工待办**`。两种承载都**逐字照搬摘要原文**，只换形式不减内容，超限时拆多条并按原顺序标注 `(1/2)`；除此之外不重复发送，网络超时不重试刷屏
-- 卡片与回退文本均失败时：摘要 `飞书通知` 记 `发送失败（<一句话原因>）`，不回显响应原文，不影响任务完成判定
+
+**失败诊断（必做）**：发送后必须同时读 `code` 与 `msg`。卡片是**整体校验**——任一元素不合法就整卡被拒，外层只返回 `code=11246`，真正原因在 `msg` 的 `ErrCode` / `ErrPath` / `ErrorValue` 三元组里，例如：
+
+```
+ErrCode: 200861
+ErrPath: ROOT -> body -> elements -> [1](tag: note)
+ErrorValue: cards of schema V2 no longer support this capability
+```
+
+只打印 `code` 会把"用了 2.0 已废弃的 `note` 元素"误判成"卡片没生效/宽度不合适"，进而做无谓的降级和改版式。排查顺序固定为：读 `msg` 取 `ErrPath` → 定位到具体元素 → 对照上面"2.0 相对 1.0 的结构差异"修正 → 重发。`ErrPath` 末尾的 `[N]` 就是出错元素在 `body.elements` 中的下标（实测 `note` 放在下标 3 时返回 `elements -> [3](tag: note)`），照它改元素即可，不必整卡重写。
+
+- **回退（禁止跳级）**：`code != 0` 时**第一步必须按 `ErrPath` 修正卡片元素后重发**（`200861 unsupported tag note`、`200621 unknown property: elements`、`not support tag: horizontal_line` 等结构类错误都是可修正错误，禁止直接改发行文本）；只有修正后仍失败、或错误明确属卡片能力之外时，才降级为 `msg_type: "text"` 固定行文本，字段顺序：标题行 → 开始时间/结束时间/耗时（三行）→ `**任务结果**` → `**影响范围**` → `**人工待办**`。两种承载都**逐字照搬摘要原文**，只换形式不减内容，超限时拆多条并按原顺序标注 `(1/2)`；除此之外不重复发送，网络超时不重试刷屏
+- 卡片与回退文本均失败时：摘要 `飞书通知` 记 `发送失败（<ErrCode> <一句话原因>）`（带上 `ErrCode`，便于复盘），不整段回显响应原文，不影响任务完成判定
