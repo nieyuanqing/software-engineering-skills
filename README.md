@@ -413,11 +413,12 @@ software-engineering-skills/
 2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug
 3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总
 4. 标记为 `IN_PROGRESS`，防止重复领取
-5. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码
-6. 修复成功 → `FIXED`；无法修复 → `FAILED`（附失败原因）
-7. 循环回到第 2 步，直到队列清空
+5. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码，逐条核对 Bug 中的问题点
+6. 按判定结果回传终态：问题点全部修复且验证通过 → `FIXED`；仅部分问题点修复（已修复部分验证通过）→
+   `PARTIALLY_FIXED`（必填 `fixNote`，格式 `已修复：…；待修复：…`）；未修复或验证不通过 → `FAILED`（必填 `failReason`）
+7. 每次 PUT 后回读 `GET /bugs/{id}` 确认状态与 `fixNote` 落库，再循环回到第 2 步，直到队列清空
 
-完成后输出汇总：处理总数、FIXED 数量、FAILED 数量及原因、项目校验不通过清单。
+完成后输出汇总：处理总数、FIXED 数量、PARTIALLY_FIXED 数量及各自的"待修复"要点、FAILED 数量及原因、项目校验不通过清单。`PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取，同时列入人工待办。
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: aibug
-description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。依次执行：登录获取 token → 获取下一个 Bug → 分析代码并修复 → 更新状态（FIXED/FAILED），直到无更多待处理 Bug。必须配合 aibug 系统使用。支持 /aibug -h 查看帮助。
+description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。依次执行：登录获取 token → 获取下一个 Bug → 分析代码并修复 → 更新状态（FIXED/PARTIALLY_FIXED/FAILED），直到无更多待处理 Bug。必须配合 aibug 系统使用。支持 /aibug -h 查看帮助。
 ---
 
 # aibug
@@ -9,7 +9,7 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
 
 **触发条件**：用户要求自动修复 Bug、接入 aibug 系统，或说"开始修 Bug"。
 
-> **执行方式：必须串行执行，禁止并行。** 同一时刻只允许一个本 skill 实例；**每条 Bug 通过子 agent 处理，严格逐条串行**——上一条 Bug 完成状态回传（FIXED/FAILED）并回读确认后，才可为下一条 Bug 启动子 agent。禁止并行启动多个实例、并行启动多个子 agent 同时处理不同 Bug，也禁止与 /aicase、/do-test 并发运行。
+> **执行方式：必须串行执行，禁止并行。** 同一时刻只允许一个本 skill 实例；**每条 Bug 通过子 agent 处理，严格逐条串行**——上一条 Bug 完成状态回传（FIXED / PARTIALLY_FIXED / FAILED）并回读确认后，才可为下一条 Bug 启动子 agent。禁止并行启动多个实例、并行启动多个子 agent 同时处理不同 Bug，也禁止与 /aicase、/do-test 并发运行。
 
 ---
 
@@ -34,16 +34,20 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
   2. GET  {host}/aibug/api/bugs/next           获取下一个 PENDING Bug
   3. PUT  {host}/aibug/api/bugs/{id}/status    标记为 IN_PROGRESS
   4. 委托子智能体分析 Bug 并修复；每修复一个即刻验证（编译/构建/复测），
-     验证通过才可标记 FIXED，禁止最后统一验证
-  5. PUT  {host}/aibug/api/bugs/{id}/status    标记为 FIXED 或 FAILED
+     验证通过才可标记 FIXED / PARTIALLY_FIXED，禁止最后统一验证
+  5. PUT  {host}/aibug/api/bugs/{id}/status    标记为 FIXED、PARTIALLY_FIXED
+     （必填 fixNote）或 FAILED（必填 failReason）
   6. 循环回到第 2 步，直到无更多 PENDING Bug
 
 Bug 字段说明
   id          Bug 唯一 ID
   content     Bug 描述文本（说明需要修复的内容）
   fileUrls    附件相对路径（截图等，相对于 host）
-  status      当前状态：PENDING / IN_PROGRESS / FIXED / FAILED / RESOLVED / CLOSED
+  status      当前状态：PENDING / IN_PROGRESS / FIXED / PARTIALLY_FIXED
+              / FAILED / RESOLVED / CLOSED
   failReason  失败原因（状态为 FAILED 时必填）
+  fixNote     部分修复说明（状态为 PARTIALLY_FIXED 时必填）：
+              已修复内容 + 剩余待修复问题
 
 示例
   /aibug --host=http://your-server:8082 --username=admin --password=secret --project-id=1
@@ -110,6 +114,8 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 [取 Bug]     GET /aibug/api/bugs/next?projectId={PROJECT_ID} → 200，#<id>
 [回传状态]   PUT /aibug/api/bugs/{id}/status → 200，status=IN_PROGRESS
 [回读确认]   GET /aibug/api/bugs/{id} → 200，status=IN_PROGRESS
+[回传状态]   PUT /aibug/api/bugs/{id}/status → 200，status=PARTIALLY_FIXED，fixNote=已修复…；待修复…
+[回读确认]   GET /aibug/api/bugs/{id} → 200，status=PARTIALLY_FIXED，fixNote 一致
 ```
 
 - 路径中 `{PROJECT_ID}`、`{id}` 替换为真实值；token 与 Authorization 头一律不出现。
@@ -119,9 +125,9 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 
 **上下文增长优化**（防止长循环撑爆上下文窗口）：
 
-1. **子智能体隔离**：3.3 的分析与修复默认委托给子智能体（Agent 工具）执行——子智能体拥有独立上下文，定位/阅读/修改代码的完整过程不进入主循环；主循环只接收 ≤5 行的结构化结果。
-2. **响应瘦身**：所有 API 响应只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`error` 字段；禁止把完整 JSON 原文粘进对话。
-3. **台账式记录**：主循环只维护一行式台账 `#<id> → FIXED/FAILED（一句话原因）`，不保留分析细节。
+1. **子智能体隔离**：3.3 的分析与修复默认委托给子智能体（Agent 工具）执行——子智能体拥有独立上下文，定位/阅读/修改代码的完整过程不进入主循环；主循环只接收结构化结果（常规 5 行，仅 PARTIALLY_FIXED 多 1 行）。
+2. **响应瘦身**：所有 API 响应只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`fixNote`、`error` 字段；禁止把完整 JSON 原文粘进对话。
+3. **台账式记录**：主循环只维护一行式台账 `#<id> → FIXED/PARTIALLY_FIXED/FAILED（一句话原因；PARTIALLY_FIXED 追加"待修复"要点）`，不保留分析细节。
 4. **定期压缩**：每处理完 5 个 Bug，或感知上下文占用约 60% 时，执行一次 `/compact`，并明确要求保留：连接参数与 token、台账表、当前未完成 Bug 的状态。
 
 **当前 Bug 信息权重优先**（当前需求/bug 信息高于历史上下文）：
@@ -145,6 +151,7 @@ curl -s "{HOST}/aibug/api/bugs/next?projectId={PROJECT_ID}" \
   "fileUrls": "/images/202608/xxx.png",
   "filePaths": "/data/aibug/images/202608/xxx.png",
   "status": "PENDING",
+  "fixNote": null,
   "projectId": 1,
   ...
 }
@@ -183,18 +190,27 @@ curl -s "{HOST}/aibug/api/bugs/{id}" \
 **默认方式：委托子智能体**（Agent 工具，subagent_type 用 general-purpose），prompt 只包含：
 
 - 当前 Bug 卡：`#id`、`content`（原文）、附件完整地址（`{HOST}{fileUrls}`，如有）
-- 工程根路径，以及约束：最小化修复、只改代码不执行 git commit、**修复后必须验证**、无法修复时明确说明原因
+- 工程根路径，以及约束：最小化修复、只改代码不执行 git commit、**修复后必须验证**、**按下方三态判定标准给出结果**、无法修复时明确说明原因
 
 **串行约束（必做）**：每条 Bug 单独委托一个子智能体，同一时刻最多只有一个子智能体在运行；当前子智能体返回结果并记入台账后，才可为下一条 Bug 启动新的子智能体，禁止同时派出多个子智能体并行修复。
 
-要求子智能体以下列固定格式返回（≤5 行），主循环只将该结果记入台账，不追问细节：
+要求子智能体以下列固定格式返回（常规 5 行，结果为 `PARTIALLY_FIXED` 时必须追加第 6 行），主循环只将该结果记入台账，不追问细节：
 
 ```
-结果: FIXED | FAILED
+结果: FIXED | PARTIALLY_FIXED | FAILED
 修改文件: <逐行列出；FAILED 时写 无>
 验证: <验证方式> → 通过 | 失败
 说明: <一句话根因或失败原因>
+部分修复说明: <仅 PARTIALLY_FIXED 返回：已修复 <已完成内容>；待修复 <剩余问题>>
 ```
+
+**三态判定标准**（写入子智能体 prompt，必须逐点核对）：把 `content` 拆成独立问题点逐条核对——
+
+- 全部问题点均已修复且验证通过 → `FIXED`
+- 仅部分问题点修复（如只覆盖一端/一条路径/一个接口，其余点未处理或需外部系统、需产品决策配合）→ `PARTIALLY_FIXED`，并在"部分修复说明"里同时写清"已修复"与"待修复"，已修复部分必须验证通过
+- 一点都没修复、或修复后验证不通过 → `FAILED`
+
+禁止把已全量修好且验证通过的 Bug 报成 `PARTIALLY_FIXED`（避免虚增人工待办），也禁止用 `PARTIALLY_FIXED` 掩盖验证失败。
 
 子智能体内部执行：理解 `content` → 查看附件图片（如有）→ 定位代码 → Edit/Write 最小化修复 → **即刻验证（必做）**：修复完成后**在同一轮内立即验证**，验证通过才返回结果，然后才进入 3.4 更新状态、再取下一个 Bug；**禁止**把验证推迟到所有 Bug 修复完后统一做。验证方式按工程类型选最低成本——Java 工程 `mvn -q -DskipTests compile` 编译通过；前端工程构建或 lint 通过；Bug 指向具体接口时用 curl 复测该接口行为符合描述预期；工程有相关测试则运行对应测试。验证未通过则继续修复直至通过，仍无法通过则如实报告 `验证: 失败`，不得虚报 FIXED。
 
@@ -202,9 +218,17 @@ curl -s "{HOST}/aibug/api/bugs/{id}" \
 
 ### 3.4 更新 Bug 状态
 
+按 3.3 的三态判定结果回传，一次 PUT 一个终态：
+
+| 子智能体结果 | 回传状态 | 必填说明字段 |
+|---|---|---|
+| `结果: FIXED` + `验证: 通过`，问题点全部覆盖 | `FIXED` | 无 |
+| `结果: PARTIALLY_FIXED` + 已修复部分 `验证: 通过` | `PARTIALLY_FIXED` | `fixNote` |
+| `结果: FAILED`，或复验仍不通过 | `FAILED` | `failReason` |
+
 **标记 FIXED 的前提**：该 Bug 的验证已在**本轮修复后即刻完成**（不是全部修完后统一验证），且子智能体结果同时满足 `结果: FIXED` 与 `验证: 通过`。若 `验证: 失败`，退回子智能体追加修复一轮（携带失败现象），复验仍失败则标记 `FAILED`，failReason 写明"修复后验证未通过：<验证方式与失败现象>"。
 
-**修复成功** → 标记为 `FIXED`：
+**全部修复** → 标记为 `FIXED`：
 
 ```bash
 curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
@@ -212,6 +236,22 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
   -H "Content-Type: application/json" \
   -d '{"status":"FIXED","projectId":{PROJECT_ID}}'
 ```
+
+**部分修复** → 标记为 `PARTIALLY_FIXED`，并填写 `fixNote`（必填，缺失服务端返回 400）：
+
+```bash
+curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"PARTIALLY_FIXED","projectId":{PROJECT_ID},"fixNote":"已修复：<已完成内容>；待修复：<剩余问题>"}'
+```
+
+`fixNote` 编写要求：
+
+- 固定采用 `已修复：…；待修复：…` 两段式，两段都必须有实质内容，"待修复"不得写成"其余部分"这类空话
+- 全文 ≤200 字，只写问题点级别的事实，不贴代码
+- 已修复部分必须是**本轮已验证通过**的内容；未验证的部分一律归入"待修复"
+- 每个 `PARTIALLY_FIXED` 的 Bug 都要把"待修复"要点原样列入本次任务的**人工待办**清单（common-rules 规范一"人工待办"板块），标注 `#<id>` 与 `@研发`，避免剩余问题被漏掉
 
 **无法修复** → 标记为 `FAILED`，并填写 `failReason`（必填）：
 
@@ -227,7 +267,9 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - 需要修改的逻辑超出当前代码范围（依赖外部系统）
 - 描述不足以确定如何修复，且无法从上下文推断
 
-**回读验证**（必做）：PUT 后用与 3.2 相同的方式回读 `GET /bugs/{id}`，确认 `status` 为 `FIXED` 或 `FAILED`；不一致则重试一次，仍不一致则向用户告警并保留该 Bug 的 ID 与期望状态。
+**回读验证**（必做）：PUT 后用与 3.2 相同的方式回读 `GET /bugs/{id}`，确认 `status` 为 `FIXED`、`PARTIALLY_FIXED` 或 `FAILED`；标为 `PARTIALLY_FIXED` 时还要确认回读的 `fixNote` 与提交内容一致。不一致则重试一次，仍不一致则向用户告警并保留该 Bug 的 ID、期望状态与期望 `fixNote`。
+
+> 服务端只在对应状态下保存说明字段：`failReason` 仅 `FAILED` 保留，`fixNote` 仅 `PARTIALLY_FIXED` 保留，其余状态一律置空。因此后续把某条 `PARTIALLY_FIXED` 的 Bug 改成 `FIXED`/`RESOLVED` 时原 `fixNote` 会被清空，需要留痕的剩余问题应先另建 Bug 或在本轮汇总中记录。
 
 ### 3.5 循环至下一个 Bug
 
@@ -244,11 +286,15 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 
 共处理 Bug：N 个
   - FIXED：N 个
+  - PARTIALLY_FIXED：N 个（逐条列出 #id 与 fixNote 中的"待修复"要点；无则 0）
   - FAILED：N 个（附各 Bug ID 和失败原因）
   - 项目校验不通过：N 个（逐条列出 #id 与实际 projectId；无则 0）
 
 队列已清空，无更多 PENDING Bug。
 ```
+
+- `PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（服务端 `/bugs/next` 只下发 `PENDING`），本轮及后续 `/aibug` 都不会再自动处理其剩余问题；需在 aibug 界面把状态改回 `PENDING` 才会重新进入队列。
+- 这些剩余问题除列在本汇总外，还必须按 3.4 要求进入规范一的"人工待办"板块（`@研发`）。
 
 ---
 
@@ -257,8 +303,9 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - 所有参数（HOST、USERNAME、PASSWORD、PROJECT_ID）均无默认值，必须由用户在每次调用时提供。
 - `PROJECT_ID` 必须通过命令行 `--project-id=N` 传入；缺失时直接报错终止，不做交互询问兜底。
 - 密码仅用于登录请求，不写入任何文件，不在日志中明文输出。
-- `FAILED` 状态必须提供 `failReason`，否则 API 会返回错误。
-- 服务端对 `status` 做枚举校验（PENDING / IN_PROGRESS / FIXED / FAILED / RESOLVED / CLOSED），非法值返回 HTTP 400 及 `{"error": ...}`；每次 PUT 后必须检查响应中的 `error` 字段，出现则视为更新失败。
+- `FAILED` 状态必须提供 `failReason`，`PARTIALLY_FIXED` 状态必须提供 `fixNote`，否则 API 返回 400。
+- 服务端对 `status` 做枚举校验（PENDING / IN_PROGRESS / FIXED / PARTIALLY_FIXED / FAILED / RESOLVED / CLOSED），非法值返回 HTTP 400 及 `{"error": ...}`；每次 PUT 后必须检查响应中的 `error` 字段，出现则视为更新失败。
+- `PARTIALLY_FIXED` 只用于"确有代码改动且已改动部分验证通过"的情形：一点未改或验证不通过一律 `FAILED`，全量修好一律 `FIXED`，禁止用它搪塞未验证的修复。
 - 每次修复前先标记 `IN_PROGRESS`，确保同一 Bug 不被并发处理。
 - **必须串行执行**：本 skill 全程单实例、每条 Bug 委托子 agent 逐条串行处理，禁止并行（多实例、多个子 agent 同时处理多条 Bug、与 /aicase 或 /do-test 并发均不允许）；用户要求并行时应明确拒绝并说明该约束。
 - 本 skill 仅修改代码文件，不执行 `git commit`，由用户决定是否提交修复结果。
