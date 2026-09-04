@@ -415,10 +415,16 @@ software-engineering-skills/
 4. 标记为 `IN_PROGRESS`，防止重复领取
 5. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码，逐条核对 Bug 中的问题点
 6. 按判定结果回传终态：问题点全部修复且验证通过 → `FIXED`；仅部分问题点修复（已修复部分验证通过）→
-   `PARTIALLY_FIXED`（必填 `fixNote`，格式 `已修复：…；待修复：…`）；未修复或验证不通过 → `FAILED`（必填 `failReason`）
-7. 每次 PUT 后回读 `GET /bugs/{id}` 确认状态与 `fixNote` 落库，再循环回到第 2 步，直到队列清空
+   `PARTIALLY_FIXED`；未修复或验证不通过 → `FAILED`。说明字段一律结构化、按固定标签分行填写（值内单个 `\n`
+   即断行，禁止揉成一段文字、禁止空行）：`fixNote` = `已修复 / 待修复 / 验证`，`failReason` = `现象 / 定位 /
+   下一步`，单行 ≤60 字符、整体 ≤200 字符。这两个字段在 aibug 查看弹窗按 **markdown 渲染**，字段值必须是纯文本：不写粗体/行内
+   代码/表格/引用/成对 `*` 或 `_`/删除线标记，行首不用 `#`+空格与 `-`、`+`、`*`、`数字.`，不写代码块围栏
+   （尖括号实测会被转义成正文，无需改写，只有 `<url>` 形态会变成自动链接）；允许且仅允许指向复现截图或外部
+   工单的链接 `[复现截图](/images/202608/xxx.png)`（http/https 或站内相对路径可点，`javascript:`、`data:`、
+   base64 内联图会被过滤成空 href/src）
+7. 每次 PUT 后回读 `GET /bugs/{id}` 逐行确认状态与说明字段的三个标签行落库一致，再循环回到第 2 步，直到队列清空
 
-完成后输出汇总：处理总数、FIXED 数量、PARTIALLY_FIXED 数量及各自的"待修复"要点、FAILED 数量及原因、项目校验不通过清单。`PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取，同时列入人工待办。
+完成后输出汇总：处理总数、FIXED 数量、PARTIALLY_FIXED 数量及各自 `待修复` 行原文、FAILED 数量及 `现象`+`下一步` 行原文、项目校验不通过清单。`PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取；`待修复` 与 `下一步` 两行同时进入人工待办，`@角色` 按行内点名的归属填写。
 
 ---
 
