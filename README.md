@@ -453,12 +453,12 @@ software-engineering-skills/
 | `--project-id` | 项目 ID（**必填**，未指定直接报错；作为 API 查询参数 `project-id` 传入，服务端必填并按其过滤） |
 | `--reporter` | Bug 提报者用户名（可选，服务端按提报人过滤，如 `--reporter=lvtao`；对应 API 查询参数 `reporter`） |
 | `--since` | `今天` / `昨天` / `前天` / `YYYY-MM-DD` / `YYYY-MM-DD_HH:MM:SS`，默认今天；调用 API 前统一转换为 `yyyy-MM-dd_HH:mm:ss`（如 `2026-08-26_00:00:00`） |
-| `--start-id` | 起始主键 ID（可选，正整数，如 `--start-id=174`）：清单只保留 `id>=N`（含等于）的 Bug，本地过滤（`/bugs/since` 无该查询参数），用于跳过历史遗留 Bug；不传则不设下界 |
+| `--start-id` | 起始主键 ID（可选，正整数，如 `--start-id=174`）：服务端按主键下界过滤，清单只返回 `id>=N`（含等于）的 Bug，用于跳过历史遗留 Bug；对应 API 查询参数 `start-id`（追加到请求 URL `&start-id=N`，过滤在数据库完成），不传则不设下界，本地不做任何 ID 过滤 |
 
 **工作流程**
 
-1. 登录获取 token → `GET {host}/aibug/api/bugs/since?since=<时间>&project-id=<项目ID>` 拉取 Bug 清单
-2. 逐条强制校验：指定 `--start-id` 时先剔除 `id<N` 的记录（只汇总计数，不逐条记台账）；`projectId` 与 `--project-id` 不符即跳过；指定 `--reporter` 时还校验提报者；校验不通过记录在最终汇总逐条列出
+1. 登录获取 token → `GET {host}/aibug/api/bugs/since?since=<时间>&project-id=<项目ID>[&reporter=<提报人>][&start-id=<起始ID>]` 拉取 Bug 清单（三个过滤条件下推服务端，在数据库完成）
+2. 逐条一致性校验：`projectId` 与 `--project-id` 不符即跳过；指定 `--reporter` 时还校验提报者；校验不通过记录在最终汇总逐条列出。指定 `--start-id` 时不做本地过滤，若响应仍出现 `id<起始ID` 记录，判为服务端未处理 `start-id` 的接口契约异常，立即终止并提示确认/升级 aibug 服务端
 3. 去重：已有用例元信息含 `aibug Bug #<id>` 的跳过
 4. 逐个判定：功能/接口/业务流程类 → 转化；文案样式微调、一次性数据、环境配置类 → 跳过并记录原因
 5. 生成 `test/cases/TEST-CASE-{4位编号}.md`：**优先级固定 P1**，元信息追加 `生成来源：AICASE SKILL（aibug Bug #<id>）`

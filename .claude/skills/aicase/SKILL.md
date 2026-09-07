@@ -1,6 +1,6 @@
 ---
 name: aicase
-description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm:ss 接口按时间拉取 Bug 清单，逐个分析是否需要转化为回归测试用例，在 test/cases/ 生成 TEST-CASE-{4位编号}.md（优先级固定 P1，元信息标记"生成来源：AICASE SKILL"）并重建 case-summary.md。时间参数支持 今天/昨天/前天 或日期，调用 API 前统一转换为 yyyy-MM-dd_HH:mm:ss；可选 --reporter 按提报人过滤、--start-id 只保留主键 ID>=N 的 Bug。必须配合 aibug 系统使用。支持 /aicase -h 查看帮助。
+description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm:ss 接口按时间拉取 Bug 清单，逐个分析是否需要转化为回归测试用例，在 test/cases/ 生成 TEST-CASE-{4位编号}.md（优先级固定 P1，元信息标记"生成来源：AICASE SKILL"）并重建 case-summary.md。时间参数支持 今天/昨天/前天 或日期，调用 API 前统一转换为 yyyy-MM-dd_HH:mm:ss；可选 --reporter 按提报人过滤、--start-id 按主键 ID>=N 服务端过滤清单。必须配合 aibug 系统使用。支持 /aicase -h 查看帮助。
 ---
 
 # aicase
@@ -35,15 +35,16 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
                         今天 | 昨天 | 前天 | YYYY-MM-DD | YYYY-MM-DD_HH:MM:SS
                       默认: 今天。调用 API 时统一转换为 yyyy-MM-dd_HH:mm:ss 格式
                       （如 2026-08-26_00:00:00）
-  --start-id=N        起始主键 ID（可选，正整数，如 --start-id=174）：拉取到的清单
-                      只保留 id>=N 的 Bug（含等于），用于跳过历史遗留 Bug；
-                      不传则不设 ID 下界。该过滤在本地完成（服务端无对应查询参数）
+  --start-id=N        起始主键 ID（可选，正整数，如 --start-id=174）：服务端按主键下界
+                      过滤，清单只返回 id>=N 的 Bug（含等于），用于跳过历史遗留 Bug；
+                      不传则不设 ID 下界。对应 API 查询参数 start-id
+                      （追加到请求 URL：&start-id=N，过滤在数据库完成）
   -h, --help          显示本帮助
 
 工作流程
   1. POST {host}/aibug/api/auth/login            登录，获取 token
   2. GET  {host}/aibug/api/bugs/since?since=...  获取指定时间起的 Bug 清单
-     （再按 --project-id / --reporter / --start-id 逐条校验过滤清单）
+     （服务端查询参数 project-id / reporter / start-id 一并下推过滤）
   3. 去重：已有用例元信息含 "aibug Bug #<id>" 的 Bug 跳过
   4. 逐个判定+生成（合并为一次子 agent 调用，Bug 详情由子 agent 自行获取，
      主循环只持有 id 清单）：功能/接口/业务流程类转化；
@@ -79,14 +80,14 @@ description: 连接 aibug 系统，通过 GET /bugs/since?since=yyyy-MM-dd_HH:mm
 | `--project-id=N` | `PROJECT_ID`（**必填**，无默认值；作为 API 查询参数 `project-id` 传入，服务端必填） |
 | `--reporter=NAME` | `REPORTER`（可选；Bug 提报者用户名，服务端过滤，对应 API 查询参数 `reporter`） |
 | `--since=TIME` | `SINCE`（默认 `今天`） |
-| `--start-id=N` | `START_ID`（可选；正整数，清单只保留 `id >= START_ID` 的 Bug，本地过滤，缺省不设下界） |
+| `--start-id=N` | `START_ID`（可选；正整数，对应 API 查询参数 `start-id`，服务端返回 `id >= START_ID` 的 Bug，缺省不设下界） |
 
 ### 1.2 参数校验与补齐
 
 - **`PROJECT_ID` 必须通过 `--project-id=N` 显式指定**：未指定时**直接报错终止**（输出 `错误：缺少 --project-id=N，必须指定项目 ID`），不交互询问、不继续执行。
 - 其余必填参数（HOST / USERNAME / PASSWORD）缺失时**一次性列出**统一交互询问。
 - `SINCE` 缺失时使用默认 `今天`，不强制询问。
-- **`START_ID` 可选，不询问补齐**：指定时必须是**正整数**（如 `--start-id=174`），语义为**清单只保留 `id >= START_ID` 的 Bug（含等于）**，用于跳过历史遗留 Bug；非法值（非数字、0、负数、带空格）直接报错终止（输出 `错误：--start-id=N 必须为正整数`），不静默忽略。
+- **`START_ID` 可选，不询问补齐**：指定时必须是**正整数**（如 `--start-id=174`），语义为**清单只含 `id >= START_ID` 的 Bug（含等于）**，用于跳过历史遗留 Bug；本地先校验（非法值：非数字、0、负数、带空格 → 直接报错终止，输出 `错误：--start-id=N 必须为正整数`，不静默忽略），服务端同样校验（非法返回 400 `start-id必须为数字` / `start-id必须为正整数`）。
 
 参数确定后向用户回显（密码替换为 `****`，`START_ID` 未指定时回显 `无下界`），确认后开始执行。
 
@@ -130,28 +131,28 @@ curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}&project-id={PROJECT
   -H "Authorization: Bearer <token>"
 ```
 
-指定了 `REPORTER` 时再追加 `&reporter={REPORTER}`（服务端按提报人过滤）：
+指定了 `REPORTER` / `START_ID` 时按需追加 `&reporter={REPORTER}`、`&start-id={START_ID}`（两者均在服务端过滤）：
 
 ```bash
-curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}&project-id={PROJECT_ID}&reporter={REPORTER}" \
+curl -s "{HOST}/aibug/api/bugs/since?since={SINCE_转换值}&project-id={PROJECT_ID}&reporter={REPORTER}&start-id={START_ID}" \
   -H "Authorization: Bearer <token>"
 ```
 
-`project-id` 是 **API 必填参数**（缺失返回 400 `{"error":"project-id为必填参数"}`），与本 skill 的 `--project-id` 必填校验一致。
+`project-id` 是 **API 必填参数**（缺失返回 400 `{"error":"project-id为必填参数"}`），与本 skill 的 `--project-id` 必填校验一致；`start-id` 可选（非法返回 400 `start-id必须为数字` / `start-id必须为正整数`），与 `project-id` 同为 kebab-case 查询参数。
 
 **响应**：Bug 对象数组（字段同 /bugs/next：`id`、`content`、`fileUrls`、`status`、`projectId`、`createdAt`、`username`（提报人）等）。
 
 **响应瘦身**（必做）：解析响应时每个 Bug 只读取 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`projectId`、`createdAt`、`username` 字段；禁止把完整 JSON 原文粘进对话。**逐条校验（见下）完成后，`content` 等长字段一律用后即弃，主循环最终只保留通过校验的 `id` 清单**——每条 Bug 的完整内容由处理该 Bug 的子 agent 自行通过 `GET {HOST}/aibug/api/bugs/{id}` 获取，主循环不转述、不持有。
 
-- **逐条强制校验**（必做，服务端过滤之外的兜底双保险）：对返回的每个 Bug 依次校验——
-  - 起始 ID 过滤（仅指定了 `START_ID` 时）：`id < START_ID` 的记录**剔除**，不进入判定与生成。`/bugs/since` 无对应查询参数，请求 URL 不变，取回清单后本地筛；剔除条数只在台账表头汇总（`低于起始 ID 剔除 M 个`），**不逐条记台账**（数量可能大，且属预期范围外，不算数据异常）；
+- **逐条一致性校验**（必做，兜底校验 `project-id` / `reporter` 两个服务端过滤条件）：对返回的每个 Bug 依次校验——
   - 项目校验：`projectId` 必须等于 `PROJECT_ID`；
   - 提报人校验（仅指定了 `REPORTER` 时）：`username`（提报者）必须等于 `REPORTER`；
   - 任一不通过 → 该记录**跳过**（不进入判定与生成流程），记一行台账
     `#<id> → 校验不通过（projectId=<实际值> / reporter=<实际值>）`，并在完成汇总中逐条列出。
-- 清单为空，或全部记录都被起始 ID 过滤/校验剔除 → 输出"该项目在该时间段内无可处理 Bug"（指定 `START_ID` 时补一句"剩余 PENDING 均低于起始 ID #<START_ID>"）后结束。
-- 响应为 `{"error": ...}`（时间格式非法等）→ 停止并报告；清单为空数组 → 直接输出"该时间段内无 Bug"后结束。
-- 向用户输出一行台账表头：`共拉取 N 个 Bug（since=<时间值>[，reporter=<提报人>][，startId=<START_ID> 剔除 M 个]）→ 待处理 K 个`。
+- **`START_ID` 不做本地过滤**：下界完全由服务端 `start-id` 查询参数实现。指定 `START_ID` 时若响应中出现 `id < START_ID` 的记录，说明服务端未处理该参数（旧版本会静默忽略未知查询参数），属接口契约异常 → **立即终止**，列出异常记录 `#id` 并报告"服务端不支持 start-id 过滤，请确认/升级 aibug 服务端"；**禁止**本地剔除后继续。
+- 清单为空，或全部记录都被校验剔除 → 输出"该项目在该时间段内无可处理 Bug"（指定 `START_ID` 时补一句"该时间窗口内无 ID >= <START_ID> 的 Bug"）后结束。
+- 响应为 `{"error": ...}`（时间格式非法、`start-id` 非法等）→ 停止并报告；清单为空数组 → 直接输出"该时间段内无 Bug"后结束。
+- 向用户输出一行台账表头：`共拉取 N 个 Bug（since=<时间值>[，reporter=<提报人>][，startId=<START_ID>]）→ 待处理 K 个`（N 为服务端过滤后的返回条数，指定 `START_ID` 时被过滤的历史 Bug 不在 N 内）。
 
 ---
 
@@ -231,13 +232,12 @@ grep -rl "aibug Bug #<id>" test/cases/ 2>/dev/null
 ```
 ## aicase 完成
 
-拉取 Bug：N 个（since=<时间值>[，startId=<START_ID>]）
+拉取 Bug：N 个（since=<时间值>[，startId=<START_ID>，服务端已按主键下界过滤]）
   - 生成 CASE：a 个
       TEST-CASE-NNNN <场景名>（aibug Bug #id）
       ...
   - 跳过（已有 CASE）：b 个
   - 跳过（不宜转化）：c 个（逐条：#id 原因）
-  - 低于起始 ID 剔除：M 个（仅指定 --start-id 时输出，不逐条列）
   - 校验不通过：d 个（逐条：#id 原因，如 projectId=<实际值>≠<PROJECT_ID>、
     reporter=<实际值>≠<REPORTER>）
 
@@ -251,7 +251,7 @@ grep -rl "aibug Bug #<id>" test/cases/ 2>/dev/null
 
 - 访问参数（HOST、USERNAME、PASSWORD、PROJECT_ID）的取用与安全要求与 /aibug 一致：密码仅用于登录请求，不写入任何文件、不明文输出。
 - `/bugs/since` 服务端校验时间格式 `yyyy-MM-dd_HH:mm:ss`（下划线分隔），非法返回 400 与 `error` 提示；`since` 参数本身可选（不传返回全部），本 skill 默认 `今天`，不做无时间范围的全量拉取。
-- `--start-id` 是**本地过滤**：`/bugs/since` 没有对应的下界查询参数，请求照发、取回清单后再按 `id >= START_ID` 剔除，因此它与 `--since` 是**叠加收窄**关系（时间窗口仍生效，不能用它替代 `--since` 做全量拉取）；它只缩小读取与转化范围，不影响 aibug 侧任何数据。
+- `--start-id` 是**服务端过滤**：作为 API 查询参数 `start-id` 下推，由数据库按 `id >= N` 收窄结果集（历史遗留 Bug 不再回传，省流量与上下文）。它与 `--since`、`--project-id`、`--reporter` 是**叠加收窄**关系（时间窗口仍生效，不能用它替代 `--since` 做全量拉取）；被下界过滤掉的条数本地无法统计，只输出过滤后的返回条数。**本 skill 不做任何本地 ID 过滤**：响应中出现 `id < START_ID` 即服务端未处理该参数，按第四节的接口契约异常终止，不得本地剔除后继续。该参数只缩小读取与转化范围，不影响 aibug 侧任何数据。
 - CASE 内容不得写入真实凭证；附件截图仅用于理解 Bug，不落盘到工程。
 - 只新增用例文件与重建 `case-summary.md`，不修改已有用例；不执行 `git commit`，由用户决定是否提交。
 - 本 skill 只读 aibug 数据（除登录外不发起任何写请求），不改变任何 Bug 状态。
