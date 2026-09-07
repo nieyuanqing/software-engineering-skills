@@ -440,6 +440,8 @@ software-engineering-skills/
   --project-id=1 --since=昨天              # 拉取昨天起的 Bug 并转化
 /aicase --host=... --username=... --password=... \
   --project-id=1 --since=2026-08-26        # 指定项目与日期
+/aicase --host=... --username=... --password=... \
+  --project-id=1 --since=2026-08-01 --start-id=174  # 只转化主键 ID>=174 的 Bug
 /aicase -h                                 # 查看帮助
 ```
 
@@ -451,11 +453,12 @@ software-engineering-skills/
 | `--project-id` | 项目 ID（**必填**，未指定直接报错；作为 API 查询参数 `project-id` 传入，服务端必填并按其过滤） |
 | `--reporter` | Bug 提报者用户名（可选，服务端按提报人过滤，如 `--reporter=lvtao`；对应 API 查询参数 `reporter`） |
 | `--since` | `今天` / `昨天` / `前天` / `YYYY-MM-DD` / `YYYY-MM-DD_HH:MM:SS`，默认今天；调用 API 前统一转换为 `yyyy-MM-dd_HH:mm:ss`（如 `2026-08-26_00:00:00`） |
+| `--start-id` | 起始主键 ID（可选，正整数，如 `--start-id=174`）：清单只保留 `id>=N`（含等于）的 Bug，本地过滤（`/bugs/since` 无该查询参数），用于跳过历史遗留 Bug；不传则不设下界 |
 
 **工作流程**
 
 1. 登录获取 token → `GET {host}/aibug/api/bugs/since?since=<时间>&project-id=<项目ID>` 拉取 Bug 清单
-2. 逐条强制校验：`projectId` 与 `--project-id` 不符即跳过；指定 `--reporter` 时还校验提报者；跳过记录在最终汇总逐条列出
+2. 逐条强制校验：指定 `--start-id` 时先剔除 `id<N` 的记录（只汇总计数，不逐条记台账）；`projectId` 与 `--project-id` 不符即跳过；指定 `--reporter` 时还校验提报者；校验不通过记录在最终汇总逐条列出
 3. 去重：已有用例元信息含 `aibug Bug #<id>` 的跳过
 4. 逐个判定：功能/接口/业务流程类 → 转化；文案样式微调、一次性数据、环境配置类 → 跳过并记录原因
 5. 生成 `test/cases/TEST-CASE-{4位编号}.md`：**优先级固定 P1**，元信息追加 `生成来源：AICASE SKILL（aibug Bug #<id>）`
@@ -477,6 +480,7 @@ software-engineering-skills/
 /api-test                                  # 扫描全部端，自动探测后端地址，检查并修复
 /api-test --client=web                     # 只扫描 web 管理后台（可多次传入）
 /api-test --base-url=http://localhost:8080/api/mall --allow-write
+/api-test --bucket=4                       # 清单很长时按 4 条一桶并发（桶间仍串行）
 /api-test --no-fix                         # 只出报告，不改代码
 /api-test -h                               # 查看帮助
 ```
@@ -488,15 +492,16 @@ software-engineering-skills/
 | `--base-url` | 后端 API 基础地址；不传则自动探测（各端 env / proxy 配置 / nginx vhost / specs） |
 | `--client` | 只扫描指定端（web / miniapp / android / ios），可多次传入；不传则扫描实际存在的所有端 |
 | `--allow-write` | 允许直接探测 POST/PUT/DELETE 写操作 API（默认逐个询问） |
+| `--bucket` | 请求桶并发大小（整数 **1-4**，默认 `2` = 每 2 条连续请求一桶并发；`1` = 严格串行逐条）。N>1 时把清单连续 N 条编为一桶同时发出，**桶与桶之间仍串行**（上一桶结果落台账后才起下一桶）；写操作、修复后复验与后端重启、有前后依赖的成对请求一律不进桶；非法值或 N>4 直接报错终止（不钳制） |
 | `--no-fix` | 只检查并输出报告，不修改代码 |
 
 **工作流程**
 
 1. 前置检查：识别工程中存在的客户端目录、探测后端 base url、健康检查确认后端在线、确认鉴权 token 获取方式
 2. 全端扫描：静态收集各端代码调用的后端 API（方法 + 路径 + 参数），写入 `test/api/url-list.md`
-3. 逐个验证：curl 实际请求，首先判断 HTTP 响应码是否 200 并记录响应时长；需登录接口做鉴权正反验证（带有效 token 应 200，无/无效 token 应 401/403，反向 200 判为鉴权漏洞并修复）；GET 直接探测，写操作默认需用户确认
+3. 逐个验证：curl 实际请求，首先判断 HTTP 响应码是否 200 并记录响应时长；**请求串行推进**（默认 `--bucket=2` 两条一桶，`--bucket=1` 严格逐条，上限 4，桶间串行）；需登录接口做鉴权正反验证（带有效 token 应 200，无/无效 token 应 401/403，反向 200 判为鉴权漏洞并修复）；GET 直接探测，写操作默认需用户确认
 4. 诊断修复：非 200 按状态码（404/405/400/401/403/500）先查客户端（路径/方法/参数/鉴权头），再查后端（mapping/参数绑定/安全白名单/异常日志），最小化修复后复验
-5. 响应时长分析：按 ≤100ms / 100-200ms / 200-500ms / 500ms-1s / ≥1s 五档分级输出清单，>200ms 重点关注，>500ms 必须分析原因
+5. 响应时长分析：按 ≤100ms / 100-200ms / 200-500ms / 500ms-1s / ≥1s 五档分级输出清单，>200ms 重点关注，>500ms 必须分析原因；桶并发测得的时长只作初筛，>200ms 与超时条目须 `--bucket=1` 串行复测后才定级
 6. 业务合理性检查：对 200 响应检查返回内容（业务错误码、数据缺失/矛盾、与客户端预期不符），明显不合理的分析并修复
 7. 结果输出：汇总写入 `test/api/test-result.md` 并输出中文摘要
 
@@ -504,7 +509,7 @@ software-engineering-skills/
 
 ### `/do-test`
 
-测试场景总驱动：先调用 /api-test 完成所有客户端调用 API 的基本功能验证，
+测试场景总驱动：先调用 /api-test（固定 `--bucket=4` 桶并发探测）完成所有客户端调用 API 的基本功能验证，
 再逐个执行 `test/cases/` 目录下定义的测试场景用例，最终汇总输出 `test/test-report.md`。
 
 **用法**
@@ -514,6 +519,7 @@ software-engineering-skills/
 /do-test --task=api                        # 只执行 API 基本功能验证
 /do-test --task=cases                      # 只执行场景用例验证
 /do-test --case=下单流程                   # 只执行指定场景（可多次传入）
+/do-test --bucket=1                        # API 阶段改为严格逐条请求（默认 4 条一桶）
 /do-test --no-fix                          # 只出报告，不改代码
 /do-test -h                                # 查看帮助
 ```
@@ -524,12 +530,13 @@ software-engineering-skills/
 |---|---|
 | `--task` | 只执行指定单项任务（api / cases），可多次传入；不传默认全部执行 |
 | `--case` | 只执行指定场景用例（文件名或场景名），可多次传入；隐含 --task=cases |
+| `--bucket` | 透传给 /api-test 的桶并发大小（整数 1-4）；**/do-test 默认按 `4` 调用**，显式传入时以用户值为准 |
 | `--no-fix` | 只检查并输出报告，不修改代码 |
 
 **工作流程**
 
 1. 前置检查：确定任务范围（--task，默认全部）、确认工程结构、扫描 `test/cases/` 用例清单
-2. API 验证：调用 /api-test（透传 `--no-fix`、`--base-url`），产出 `test/api/url-list.md` 与 `test/api/test-result.md`
+2. API 验证：调用 /api-test（固定 `--bucket=4`，桶间仍串行；透传 `--no-fix`、`--base-url`，用户显式给 `--bucket` 时按用户值），产出 `test/api/url-list.md` 与 `test/api/test-result.md`
 3. 场景验证：按用例定义逐步执行判定，步骤类型 API（curl）/ UI（支持 Playwright 时自动转写执行，否则标记需人工）/ 人工，执行后核对结果验证与善后清理；case-summary.md 存在时按其优先级（P0→P1→P2）排序执行，否则默认顺序
 4. 汇总报告：合并两部分结果写入 `test/test-report.md` 并输出中文摘要
 

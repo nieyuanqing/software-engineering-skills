@@ -1,6 +1,6 @@
 ---
 name: do-test
-description: 测试场景总驱动。一键编排执行工程的全部测试（默认全部执行，可用 --task=api|cases 指定单项任务）：调用 /api-test skill 完成所有客户端调用 API 的基本功能验证（产物 test/api/url-list.md、test/api/test-result.md），逐个执行 test/cases/ 目录下定义的测试场景用例并判定通过/失败，最终汇总输出测试报告 test/test-report.md。当用户要求"跑全部测试"、"执行测试场景"、"回归测试"、"整体验证"时触发。支持 /do-test -h 查看帮助。
+description: 测试场景总驱动。一键编排执行工程的全部测试（默认全部执行，可用 --task=api|cases 指定单项任务）：调用 /api-test skill 完成所有客户端调用 API 的基本功能验证（固定 --bucket=4 按桶并发探测，桶间仍串行；产物 test/api/url-list.md、test/api/test-result.md），逐个执行 test/cases/ 目录下定义的测试场景用例并判定通过/失败，最终汇总输出测试报告 test/test-report.md。当用户要求"跑全部测试"、"执行测试场景"、"回归测试"、"整体验证"时触发。支持 /do-test -h 查看帮助。
 ---
 
 # do-test
@@ -11,7 +11,7 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
 
 **触发条件**：用户要求运行全部测试、执行测试场景、回归验证，或直接输入 /do-test。
 
-> **执行方式：必须串行执行，禁止并行。** 同一时刻只允许一个本 skill 实例；**每个用例通过子 agent 执行，严格逐条串行**——上一个用例的子 agent 出结论后，才可为下一个用例启动子 agent。禁止并行启动多个实例、并行启动多个子 agent 同时执行不同用例，也禁止与 /aibug、/aicase 并发运行。
+> **执行方式：必须串行执行，禁止并行。** 同一时刻只允许一个本 skill 实例；**每个用例通过子 agent 执行，严格逐条串行**——上一个用例的子 agent 出结论后，才可为下一个用例启动子 agent。禁止并行启动多个实例、并行启动多个子 agent 同时执行不同用例，也禁止与 /aibug、/aicase 并发运行。**唯一的并发例外**：API 阶段委托 /api-test 时固定按 `--bucket=4` 发请求（同一条 Bash 命令内 4 条一桶并等齐），桶与桶之间仍然串行。
 
 ---
 
@@ -29,13 +29,17 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
                     cases（场景用例验证）；可多次传入；不传则默认全部执行
   --case=<名称>     只执行指定场景用例（文件名或场景名，可多次传入；
                     隐含 --task=cases）
+  --bucket=N        透传给 /api-test 的 HTTP 请求桶并发大小（整数 1-4）。
+                    本 skill 默认按 --bucket=4 调用（4 条一桶、桶间串行）；
+                    显式传入时以用户值为准，1 = 严格逐条
   --no-fix          只检查并输出报告，不修改任何代码
   -h, --help        显示本帮助
 
 工作流程
   1. 前置检查：确认工程结构（src/ 存在）、按任务范围确认 test/cases/ 用例
-  2. API 验证：调用 /api-test skill，全端扫描 API 并逐个验证 HTTP 200、
-     检查业务合理性，产出 test/api/url-list.md 与 test/api/test-result.md
+  2. API 验证：调用 /api-test skill（固定 --bucket=4 桶并发探测，桶间串行），全端
+     扫描 API 并逐个验证 HTTP 200、检查业务合理性，产出 test/api/url-list.md 与
+     test/api/test-result.md
   3. 场景验证：逐个委托子 agent 执行 test/cases/ 下的用例文件（严格串行），
      按步骤执行并判定结果；case-summary.md 存在时按其优先级
      （P0→P1→P2）排序执行，否则默认顺序
@@ -51,6 +55,7 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
   /do-test --task=api          只执行 API 基本功能验证
   /do-test --task=cases        只执行场景用例验证
   /do-test --case=下单流程     只执行指定场景
+  /do-test --bucket=1          API 阶段改为严格逐条（默认按 4 条一桶并发）
   /do-test --no-fix            只出报告，不改代码
   /do-test -h                  显示本帮助
 ```
@@ -59,7 +64,7 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
 
 ## 一、前置检查
 
-0. **确定任务范围**：解析 `--task`（可多个：`api` / `cases`）；传入 `--case` 时隐含包含 `cases`；未传 `--task` 与 `--case` 时默认 `api + cases` 全部执行。取值非法则报错并输出帮助后终止。
+0. **确定任务范围**：解析 `--task`（可多个：`api` / `cases`）；传入 `--case` 时隐含包含 `cases`；未传 `--task` 与 `--case` 时默认 `api + cases` 全部执行。取值非法则报错并输出帮助后终止。同时解析 `--bucket`（整数 1-4，未传按默认 `4` 透传给 /api-test）。
 1. 确认当前工作目录存在 `src/`（工程根）；不存在则报告并终止。
 2. 任务含 `cases` 时，检查 `test/cases/` 目录：
    - 存在且有用例文件 → 记录待执行清单。**主循环禁止读取用例文件全文**：`case-summary.md` 存在时只从其中提取 编号/名称/优先级；不存在时只 `ls` 文件名列表。用例内容由执行该用例的子 agent 自行读取。
@@ -72,7 +77,7 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
 
 仅当任务范围含 `api` 时执行：
 
-1. 用 Skill 工具调用 **api-test** skill 执行全端 API 验证；将本命令收到的 `--no-fix`、用户提供的 `--base-url` 等参数透传给它。
+1. 用 Skill 工具调用 **api-test** skill 执行全端 API 验证；**固定附加 `--bucket=4`**（4 条一桶并发、桶间串行），并透传本命令收到的 `--no-fix`、用户提供的 `--base-url` 等参数。用户在 `/do-test` 里显式给出 `--bucket=N` 时以用户值为准（仍受 1-4 上限约束，超出由 /api-test 报错终止）。桶并发下的时长只作初筛，>200ms 与超时条目由 /api-test 按 `--bucket=1` 串行复测后定级，本 skill 不重复测量。
 2. /api-test 完成后确认产物存在：`test/api/url-list.md`、`test/api/test-result.md`。
 3. 从 `test/api/test-result.md` 只 **grep 提取**汇总数字（通过 / 修复 / 未解决 / 跳过条数）与未解决清单行，供第四步引用；禁止整份读取该文件。
 
@@ -184,9 +189,9 @@ description: 测试场景总驱动。一键编排执行工程的全部测试（�
 
 ## 五、注意事项
 
-- /api-test 的交互确认规则（写操作逐条询问、凭据不落盘）在本 skill 中同样有效；透传用户已给出的确认，不重复询问。
+- /api-test 的交互确认规则（写操作逐条询问、凭据不落盘）在本 skill 中同样有效；透传用户已给出的确认，不重复询问。API 阶段固定以 `--bucket=4` 调用（写操作与修复后复验按 /api-test 规则仍不进桶）。
 - 探测使用的账号、token 只出现在请求中，不写入文件、不在报告中明文输出。
 - 造测试数据、执行写操作前必须经用户确认，并说明作用于当前后端环境。
 - 工程根目录 `v0/` 是只读产品设计文档，禁止修改。
-- **必须串行执行**：本 skill 全程单实例、每个用例委托子 agent 逐条串行执行，禁止并行（多实例、多个子 agent 同时执行多用例、与 /aibug 或 /aicase 并发均不允许）；用户要求并行时应明确拒绝并说明该约束。
+- **必须串行执行**：本 skill 全程单实例、每个用例委托子 agent 逐条串行执行，禁止并行（多实例、多个子 agent 同时执行多用例、与 /aibug 或 /aicase 并发均不允许）；用户要求并行时应明确拒绝并说明该约束。**口径澄清**：这里禁止的是"用例级/实例级并行"，API 阶段 `/api-test` 的桶内 HTTP 并发（`--bucket=4`，桶间仍串行）是允许的提速方式，不视为并行违规。
 - 本 skill 只修改代码文件与 test/ 下的产物文件，不执行 `git commit`，由用户决定是否提交。
