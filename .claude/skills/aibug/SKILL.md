@@ -1,6 +1,6 @@
 ---
 name: aibug
-description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。依次执行：登录获取 token → 获取下一个 Bug → 分析代码并修复 → 更新状态（FIXED/PARTIALLY_FIXED/FAILED），直到无更多待处理 Bug。必须配合 aibug 系统使用。支持 /aibug -h 查看帮助。
+description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。依次执行：登录获取 token → 获取下一个 Bug → 分析代码并修复 → 更新状态（FIXED/PARTIALLY_FIXED/FAILED），直到无更多待处理 Bug；可用 --bug-id=N 只处理并按该 #bugId 回写指定单条。必须配合 aibug 系统使用。支持 /aibug -h 查看帮助。
 ---
 
 # aibug
@@ -27,11 +27,13 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
   --username=NAME     登录账号
   --password=PASS     登录密码
   --project-id=N      项目 ID（必填，未指定直接报错；如 --project-id=1）
+  --bug-id=N          只处理指定 Bug（可选，正整数；指定后跳过队列，状态按该 #bugId 回写）
   -h, --help          显示本帮助
 
 工作流程
   1. POST {host}/aibug/api/auth/login          登录，获取 token
   2. GET  {host}/aibug/api/bugs/next           获取下一个 PENDING Bug
+     （传了 --bug-id=N 时改为 GET {host}/aibug/api/bugs/N 直接取该条，不限当前状态）
   3. PUT  {host}/aibug/api/bugs/{id}/status    标记为 IN_PROGRESS
   4. 委托子智能体分析 Bug 并修复；每修复一个即刻验证（编译/构建/复测），
      验证通过才可标记 FIXED / PARTIALLY_FIXED，禁止最后统一验证；
@@ -39,6 +41,7 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
   5. PUT  {host}/aibug/api/bugs/{id}/status    标记为 FIXED、PARTIALLY_FIXED
      （必填 fixNote）或 FAILED（必填 failReason）；说明字段按固定标签分行填写，
      纯文本不写 markdown 标记（弹窗按 markdown 渲染，可选贴 http/站内链接）
+     {id} 一律取当前 Bug 卡的 #bugId，只允许该单条接口，禁用 /bugs/batch/status
   6. 循环回到第 2 步，直到无更多 PENDING Bug
 
 Bug 字段说明
@@ -69,10 +72,12 @@ Bug 字段说明
 | `--username=NAME` | `USERNAME`（必填，无默认值） |
 | `--password=PASS` | `PASSWORD`（必填，无默认值） |
 | `--project-id=N` | `PROJECT_ID`（必填，无默认值） |
+| `--bug-id=N` | `BUG_ID`（可选，正整数；指定后**只处理该条 Bug**，跳过 `/bugs/next` 队列，状态按该 `#bugId` 回写） |
 
 ### 1.2 参数校验与补齐
 
 - **`PROJECT_ID` 必须通过 `--project-id=N` 显式指定**：未指定时**直接报错终止**（输出 `错误：缺少 --project-id=N，必须指定项目 ID`），不交互询问、不继续执行。
+- **`BUG_ID` 可选，指定时必须是正整数**（如 `--bug-id=170`）：非法值（非数字、0、负数、带空格）直接报错终止（输出 `错误：--bug-id=N 必须为正整数`），不静默忽略、不退回队列模式。
 - 其余必填参数缺失时**一次性列出**，统一交互询问：
 
 | 参数 | 说明 |
@@ -107,7 +112,7 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 
 ## 三、修复循环
 
-以下步骤循环执行，直到无更多 PENDING Bug 为止。
+以下步骤循环执行，直到无更多 PENDING Bug 为止。**指定模式（传了 `BUG_ID`）只执行一遍**：该条回读确认通过即结束整个流程。
 
 ### 执行过程输出要求（必做）
 
@@ -124,6 +129,18 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 - 路径中 `{PROJECT_ID}`、`{id}` 替换为真实值；token 与 Authorization 头一律不出现。
 - `fixNote` / `failReason` 是多行结构化字段，输出行里**只标注标签序列**（如 `fixNote=已修复/待修复/验证`），不在这里展开正文，正文由 3.4 的回读验证逐行比对。
 - 非 200 或响应含 `error` 时在同一行追加一句话原因，不重试转述响应体。
+- 同一轮内 `[取 Bug]`、`[回传状态]`、`[回读确认]` 三行的 `#<id>` 必须完全一致（都等于当前 Bug 卡的 `id`）；不一致立即停手，按"状态回写寻址约束"处理。
+
+### 状态回写寻址约束（必做）
+
+所有状态写入只认**当前 Bug 卡的 `#bugId`**，一次只改一条：
+
+- 唯一合法通道：`PUT {HOST}/aibug/api/bugs/{CURRENT_ID}/status`，`{CURRENT_ID}` 逐字等于本轮 Bug 卡的 `id`（队列模式取 `/bugs/next` 的返回值，指定模式取 `--bug-id`）；回读同样用该 ID 的 `GET {HOST}/aibug/api/bugs/{CURRENT_ID}`
+- **禁止批量接口** `PUT {HOST}/aibug/api/bugs/batch/status`（body 用 `ids` 数组一次改多条，无法保证落点），任何情形都不使用
+- 禁止从对话历史、台账、上一条 Bug 的结论或子智能体返回文本里推断 ID：`{CURRENT_ID}` 只由主循环从取卡响应里确定，子智能体只回传结论，回写由主循环发起
+- 发起 PUT 前先回显一行 `#<id> → 即将回写 <状态>`；PUT 路径、PUT 响应里的 `id`、回读路径三处必须完全相同
+- 出现任一不一致（回读 `id` ≠ 提交 `id`、读到的是其它 Bug、PUT 响应含 `error`）→ **立即终止本轮**（指定模式终止整个执行），记台账 `#<id> → 回写 ID 不一致，已终止`，列入完成汇总的"回写异常"清单；不带猜测重试、不改写任何其它 Bug 的状态
+- 重复报单（多条 Bug 指向同一问题点）时，逐条各自回写各自的 `#id`，不得只回写一条或把结论写到另一条上
 
 ### 上下文与权重控制（全程必做）
 
@@ -141,6 +158,20 @@ curl -s -X POST "{HOST}/aibug/api/auth/login" \
 3. **干净上下文**：子智能体 prompt 只包含当前 Bug 卡 + 工程路径 + 修复约束，不携带任何历史 Bug 信息，天然保证当前需求获得最高权重。
 
 ### 3.1 获取下一个 Bug
+
+**指定模式（传了 `BUG_ID`）**：跳过本步的队列拉取，直接按该 `#bugId` 取卡，一次只处理这一条：
+
+```bash
+curl -s "{HOST}/aibug/api/bugs/{BUG_ID}" \
+  -H "Authorization: Bearer <token>"
+```
+
+- 响应含 `error`、404 或 `id` 不等于 `{BUG_ID}` → **直接报错终止**（输出 `错误：#<BUG_ID> 不存在或不可读`），不转队列模式、不改写其它 Bug；
+- `projectId` 与 `PROJECT_ID` 不一致 → **直接报错终止**（不改动该 Bug 状态），防止跨项目误回写；
+- **不限当前状态**：`PENDING / IN_PROGRESS / FIXED / PARTIALLY_FIXED / FAILED / RESOLVED / CLOSED` 均可重新处理，本轮终态覆盖原状态；覆盖前先向用户明示 `#<id> <原状态> → <本轮判定状态>`，并把原状态与原有 `fixNote`/`failReason` 摘要记入台账（服务端在 `FIXED` 等状态下会清空说明字段，落库后不可恢复）；
+- 该条处理完（3.4 回读确认通过）即进入完成输出，**不回到本步取下一个 Bug**。
+
+**队列模式（未传 `BUG_ID`）**：按下述流程循环拉取 PENDING 清单。
 
 ```bash
 curl -s "{HOST}/aibug/api/bugs/next?projectId={PROJECT_ID}" \
@@ -161,7 +192,7 @@ curl -s "{HOST}/aibug/api/bugs/next?projectId={PROJECT_ID}" \
 }
 ```
 
-**响应**（无更多 Bug）：返回 HTTP 4xx 或空对象。遇到此情况，**退出循环**，向用户报告"所有 Bug 已处理完毕"。
+**响应**（无更多 Bug）：返回 **HTTP 204（No Content，无响应体）**；出现 204、或 4xx、或响应含 `error` 时，**退出循环**，向用户报告"所有 Bug 已处理完毕"。
 
 **项目校验（必做）**：取到 Bug 后立即将响应中的 `projectId` 与命令行 `PROJECT_ID` 比对：
 
@@ -335,7 +366,7 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 
 ### 3.5 循环至下一个 Bug
 
-完成一个 Bug 的处理后，回到 **3.1**，继续获取下一个 PENDING Bug。
+完成一个 Bug 的处理后，回到 **3.1**，继续获取下一个 PENDING Bug。**指定模式（传了 `BUG_ID`）不回队列**：该条回读确认通过即结束，直接进入第四节。
 
 ---
 
@@ -351,8 +382,10 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
   - PARTIALLY_FIXED：N 个（逐条列出 #id 与 fixNote 的 `待修复` 行原文；无则 0）
   - FAILED：N 个（逐条列出 #id 与 failReason 的 `现象` + `下一步` 行原文；无则 0）
   - 项目校验不通过：N 个（逐条列出 #id 与实际 projectId；无则 0）
+  - 回写异常（ID 不一致，已终止）：N 个（逐条列出 #id 与期望状态；无则 0）
 
-队列已清空，无更多 PENDING Bug。
+（队列模式）队列已清空，无更多 PENDING Bug。
+（指定模式）#<BUG_ID> 处理完毕，本轮只回写该条状态，未触碰其它 Bug。
 ```
 
 - 汇总里引用说明字段时只摘对应标签行的原文，禁止把三行改写成一段叙述。
@@ -365,6 +398,8 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 
 - 所有参数（HOST、USERNAME、PASSWORD、PROJECT_ID）均无默认值，必须由用户在每次调用时提供。
 - `PROJECT_ID` 必须通过命令行 `--project-id=N` 传入；缺失时直接报错终止，不做交互询问兜底。
+- `--bug-id=N` 为可选的指定模式：跳过 `/bugs/next`，只处理并按该 `#bugId` 回写这一条，不限原状态但会覆盖原状态；处理完即结束，不回队列，也不触碰任何其它 Bug。
+- **状态回写只允许按 `#bugId` 的单条接口** `PUT /aibug/api/bugs/{id}/status`；后端另有 `PUT /aibug/api/bugs/batch/status`（`ids` 数组批量改多条），本 skill 一律禁用，详见"状态回写寻址约束"。
 - 密码仅用于登录请求，不写入任何文件，不在日志中明文输出。
 - `FAILED` 状态必须提供 `failReason`，`PARTIALLY_FIXED` 状态必须提供 `fixNote`，否则 API 返回 400。
 - `fixNote` / `failReason` 一律按 3.4 的三行标签结构回写（值内用单个 `\n` 分行），禁止写成一段连续文字。

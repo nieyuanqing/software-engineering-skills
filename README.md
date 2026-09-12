@@ -394,11 +394,13 @@ software-engineering-skills/
 /aibug --host=http://your-server:8082 \
   --username=admin --password=secret \
   --project-id=1                         # 全参数指定，直接开始
+/aibug --host=... --username=... --password=... \
+  --project-id=1 --bug-id=170           # 只处理 #170，状态按该 #bugId 回写
 /aibug                                   # 交互式，逐一询问参数
 /aibug -h                                # 查看帮助
 ```
 
-**所有参数均为必填，无默认值：**
+**必填参数（无默认值）：**
 
 | 参数 | 说明 |
 |---|---|
@@ -407,11 +409,17 @@ software-engineering-skills/
 | `--password` | 登录密码 |
 | `--project-id` | 项目 ID |
 
+**可选参数：**
+
+| 参数 | 说明 |
+|---|---|
+| `--bug-id` | 指定模式：跳过 `/bugs/next` 队列，只处理这一条并按该 `#bugId` 回写状态（正整数，非法直接报错；不限原状态，但会覆盖原状态，处理完即结束） |
+
 **工作流程**
 
 1. `POST {host}/aibug/api/auth/login` — 登录获取 token
-2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug
-3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总
+2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug；传了 `--bug-id=N` 时跳过队列，改为 `GET {host}/aibug/api/bugs/N` 直接取该条（不限当前状态，本轮终态覆盖原状态），处理完即结束、不回队列
+3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总；**指定模式下不符直接报错终止**，防止跨项目误回写
 4. 标记为 `IN_PROGRESS`，防止重复领取
 5. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码，逐条核对 Bug 中的问题点
 6. 按判定结果回传终态：问题点全部修复且验证通过 → `FIXED`；仅部分问题点修复（已修复部分验证通过）→
@@ -425,9 +433,9 @@ software-engineering-skills/
    （尖括号实测会被转义成正文，无需改写，只有 `<url>` 形态会变成自动链接）；允许且仅允许指向复现截图或外部
    工单的链接 `[复现截图](/images/202608/xxx.png)`（http/https 或站内相对路径可点，`javascript:`、`data:`、
    base64 内联图会被过滤成空 href/src）
-7. 每次 PUT 后回读 `GET /bugs/{id}` 逐行确认状态与说明字段的三个标签行落库一致，再循环回到第 2 步，直到队列清空
+7. 每次 PUT 后回读 `GET /bugs/{id}` 逐行确认状态与说明字段的三个标签行落库一致，再循环回到第 2 步，直到队列清空。**回写寻址硬约束**：状态只走按当前 `#bugId` 的单条接口 `PUT /bugs/{id}/status`，**禁用**批量接口 `PUT /bugs/batch/status`；PUT 路径、PUT 响应里的 `id`、回读路径三处必须完全相同，且只取本轮 Bug 卡的 `id`（不从台账或历史结论里推断）；出现不一致立即终止（指定模式终止整个执行），记为回写异常，不改写任何其它 Bug
 
-完成后输出汇总：处理总数、FIXED 数量（其中已修复/重复修复、本轮零改动 m 个，逐条 #id 与已存在修复位置）、PARTIALLY_FIXED 数量及各自 `待修复` 行原文、FAILED 数量及 `现象`+`下一步` 行原文、项目校验不通过清单。`PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取；`待修复` 与 `下一步` 两行同时进入人工待办，`@角色` 按行内点名的归属填写。
+完成后输出汇总：处理总数、FIXED 数量（其中已修复/重复修复、本轮零改动 m 个，逐条 #id 与已存在修复位置）、PARTIALLY_FIXED 数量及各自 `待修复` 行原文、FAILED 数量及 `现象`+`下一步` 行原文、项目校验不通过清单、回写异常（ID 不一致已终止）清单。`PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取；`待修复` 与 `下一步` 两行同时进入人工待办，`@角色` 按行内点名的归属填写。
 
 ---
 
