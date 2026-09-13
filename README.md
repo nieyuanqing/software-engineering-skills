@@ -37,6 +37,7 @@
 | [`/new‑test‑case`](#new-test-case) | 在 test/cases/ 下新增一个测试用例文件（TEST-CASE-{4位递增编号}.md），一次执行生成一个 |
 | [`/do‑security‑check`](#do-security-check) | 全维度安全检测：静态（Semgrep SAST + Trivy 依赖漏洞/密钥/Git 历史/IaC/许可证/SBOM + 智能体源码分析）、运行时（安全头/OWASP/JWT/TLS/端口，可选 Nuclei/ZAP） |
 | [`/git‑summary`](#git-summary) | 输出指定分支从创建时间开始的精简 commit 摘要列表（分叉点、起始时间、逐条一行、类型与作者统计），默认当前分支，全程只读 |
+| [`/db‑compare`](#db-compare) | 只读比对两个环境的 PostgreSQL 表与字段结构（字段级差异报告）。源默认本地 dev，目标必须手动 `--dst-db=<远程主机名>`，不支持任何写操作 |
 
 逐个 skill 的详细用法见下方对应章节。
 
@@ -61,6 +62,10 @@ software-engineering-skills/
     ├── new-test-case/SKILL.md         新增单个测试用例 TEST-CASE-{4位编号}.md 到 test/cases/
     ├── do-security-check/SKILL.md     全维度安全检测（Semgrep + Trivy + 运行时 + 镜像）
     ├── git-summary/SKILL.md           分支从创建时间起的精简 commit 摘要（默认当前分支，只读）
+    ├── db-compare/                    只读比对环境间 PostgreSQL 表与字段结构（字段级）
+    │   ├── SKILL.md
+    │   ├── scripts/db-compare.sh      两侧抓取（本机 psql / 远端 ssh+psql）+ 差异比对 + 报告
+    │   └── scripts/structure.sql      information_schema 字段结构查询（两侧共用同一份）
     ├── new-android-build/             生成 Android 编译校验脚本 android-build.sh
     │   ├── SKILL.md
     │   └── templates/scripts/android-build.sh
@@ -663,3 +668,40 @@ software-engineering-skills/
 - 允许的命令限于 `rev-parse` / `rev-list` / `log` / `show` / `merge-base` / `branch` / `shortlog` / `symbolic-ref`，禁止 `checkout` / `fetch` / `pull` / `merge` / `rebase` / `reset` 等任何改状态操作
 
 **输出**：表头（分支、基线、分叉点、起始时间、提交数、时间跨度、作者数、类型分布）+ 逐条 `短 hash 日期 commit 首行`（超 72 字符截断，不改写不翻译）；随后按 `/common-rules` 规范一补影响范围（只读，无变更）、人工待办与起止时间。
+
+---
+
+### `/db-compare`
+
+只读比对两个环境的 **PostgreSQL 表与字段结构**，粒度到字段级，输出差异报告。源环境默认本地开发环境；目标环境**必须手动指定远程主机名，无默认值**，缺失时 skill 会停下提醒。不支持任何写操作。
+
+**用法**
+
+```bash
+/db-compare --dst-db=db-prod                        # 本地 dev vs 远端 prod 主机
+/db-compare --src-db=test --dst-db=db-prod          # 测试环境 vs 生产主机
+/db-compare --dst-db=db-prod --service=aibug --schema=app
+/db-compare --dst-db=db-prod --out=/tmp/schema.md   # 报告另存文件
+/db-compare -h                                      # 查看帮助
+```
+
+**参数**
+
+| 参数 | 说明 |
+|---|---|
+| `--dst-db` | **必填，无默认值**：目标环境远程主机名。缺失只提醒不猜测，也不会拿本项目 `deploy-conf/env.prod` 顶替 |
+| `--src-db` | 源环境 `dev`（默认）/ `test` / `prod`，分别读 `src/backend/<服务>/.env`、`.env.test`、`.env.prod` |
+| `--src-host` | 源侧也在远程主机时使用（默认本机直连） |
+| `--service` | 定位 `src/backend/<服务>/` 与远端 `/opt/soft/apps/<服务>/.env`；本机仅一个后端时自动识别 |
+| `--schema` | 比对的 schema，默认 `public`；一次只比一个 schema |
+| `--out` | 报告另存 markdown 文件（默认只输出到对话） |
+
+**比对粒度与范围**
+
+- 表级：仅源侧存在 / 仅目标侧存在
+- 字段级（仅统计两侧共有表内）：字段增减、类型与长度/精度、可空性、默认值
+- 不比对：数据行、索引、约束、序列、注释、触发器、权限；不生成也不执行任何变更 SQL
+
+**只读保证**：只执行一条 `SELECT information_schema.columns`（`scripts/structure.sql`，两侧共用同一份）；连接强制 `default_transaction_read_only=on`；目标侧经 `ssh` 在**远端本机**执行只读 psql（部署约定 PG 是本机私有实例，外部不可直连），口令只在远端进程内使用，不出本机、不进报告。远端需已配置免密登录（`ssh -o BatchMode=yes`，不做密码交互）。
+
+**退出码**：`0` 结构完全一致 ｜ `1` 存在差异 ｜ `2` 执行失败（参数缺失、env 不存在或为 `changeme` 占位符、psql/ssh 失败、快照为空）。结论只认退出码与报告原文，清单类每段最多 40 条、差异表最多 60 行，完整清单用 `--out`。
