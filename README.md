@@ -320,7 +320,7 @@ software-engineering-skills/
 - **飞书完成通知（白名单）**：仅**代码实现 / Bug 修复 / 测试 / 产品新增功能 / Bug 转 case / 生成待办信息**六类任务推送，正文**逐字照搬摘要原文**（不精简、不压缩、不改写）；卡片正文一律用 markdown 元素承载（小标题加粗 + 有序列表，不用代码块）；"生成待办信息"指产出需他人处理的实质待办（手工执行 SQL、上线前准备、需人工验证），等待用户决定推送的流程性待办不计入；咨询答疑、方案规划、文档修改、`git commit`/`push`/PR、skill 安装与文案维护等一律不发送；参数可选，不配置或配置不全则静默跳过，见下
 - **v0 文档保护**：工程根目录 `v0/` 下的原始产品设计文档只读，禁止修改（`src/web/v0/` 为 AI 生成代码目录，不受此限制）
 - **禁止硬编码**：密码、密钥、Token 等敏感信息必须通过环境变量或占位符处理
-- **commit 格式**：git commit message 必须为 `<类型>: <描述>` 结构化格式（feat/fix/refactor/docs/style/test/chore）
+- **commit 格式**：git commit message 必须为 `<类型>: <描述>` 结构化格式（feat/fix/refactor/docs/style/test/chore），末尾固定两行尾注——`分支: <目标提交分支>`（`git branch --show-current`）、`提交时间: <YYYY-MM-DD HH:MM:SS>`（东八区，提交当次 `TZ='Asia/Shanghai' date` 实测，禁止估算）；无正文时尾注也必须保留
 - **CORS 走 nginx**：禁止在 Java 后端处理跨域，统一由 nginx 配置写入
 - **三环境配置对齐**：dev/test/prod 三套配置文件（env、nginx vhost、application yml）配置项集合必须保持对齐，新增/删除/更名配置项时三套同步变更，仅值可因环境不同
 - **API 安全基线**：对外 API 用不可预测的 code 代替自增主键 ID 标识资源（防枚举、防业务量泄露）；服务端必须做对象级授权，校验资源归属（防 IDOR 越权）
