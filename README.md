@@ -36,6 +36,7 @@
 | [`/do‑test`](#do-test) | 测试场景总驱动：调用 /api-test 完成 API 基本功能验证，并执行 test/cases/ 下的场景用例，汇总测试报告 |
 | [`/new‑test‑case`](#new-test-case) | 在 test/cases/ 下新增一个测试用例文件（TEST-CASE-{4位递增编号}.md），一次执行生成一个 |
 | [`/do‑security‑check`](#do-security-check) | 全维度安全检测：静态（Semgrep SAST + Trivy 依赖漏洞/密钥/Git 历史/IaC/许可证/SBOM + 智能体源码分析）、运行时（安全头/OWASP/JWT/TLS/端口，可选 Nuclei/ZAP） |
+| [`/git‑summary`](#git-summary) | 输出指定分支从创建时间开始的精简 commit 摘要列表（分叉点、起始时间、逐条一行、类型与作者统计），默认当前分支，全程只读 |
 
 逐个 skill 的详细用法见下方对应章节。
 
@@ -59,6 +60,7 @@ software-engineering-skills/
     ├── do-test/SKILL.md               测试总驱动：API 验证（委托 api-test）+ test/cases/ 场景用例
     ├── new-test-case/SKILL.md         新增单个测试用例 TEST-CASE-{4位编号}.md 到 test/cases/
     ├── do-security-check/SKILL.md     全维度安全检测（Semgrep + Trivy + 运行时 + 镜像）
+    ├── git-summary/SKILL.md           分支从创建时间起的精简 commit 摘要（默认当前分支，只读）
     ├── new-android-build/             生成 Android 编译校验脚本 android-build.sh
     │   ├── SKILL.md
     │   └── templates/scripts/android-build.sh
@@ -625,3 +627,39 @@ software-engineering-skills/
 2. 静态检测：按维度执行，收集 JSON 结构化结果
 3. 运行时检测（有 `--url`）：安全头 + OWASP 只读探测 + JWT + TLS + 端口暴露面；nuclei/zap 可用时追加
 4. 汇总修复：`--fix` 时最小化修复并复扫，报告写入 `test/security/security-check-report.md`
+
+---
+
+### `/git-summary`
+
+输出指定 git 分支**从创建时间开始**的精简 commit 摘要列表：分叉点、分支起始时间、逐条一行摘要、类型与作者统计。默认当前分支，全程只读，不改动任何 git 状态。
+
+**用法**
+
+```bash
+/git-summary                                  # 当前分支，基线自动探测
+/git-summary --branch=feature/login           # 指定分支
+/git-summary --base=develop --branch=feat/x   # 基线不是 main 时显式指定
+/git-summary feature/login                    # 位置参数等价 --branch
+/git-summary --with-merges --limit=20         # 包含 merge 提交，只列最近 20 条
+/git-summary -h                               # 查看帮助
+```
+
+**参数**（全部可选）
+
+| 参数 | 说明 |
+|---|---|
+| `--branch` | 目标分支，默认 `git branch --show-current`；支持本地名或 `origin/xxx`，解析不到则报错并列出相近分支 |
+| `--base` | 基线分支，默认探测顺序 `origin/HEAD` → `main` → `master`（本地优先，其次 `origin/<b>`） |
+| `--with-merges` | 列表中保留 merge 提交（默认 `--no-merges` 排除） |
+| `--limit` | 只列最近 N 条，统计仍按全量；分支即基线的退化输出未指定时默认 30 条 |
+
+**关键口径**
+
+- **分支起始时间取区间内最早一条独有提交**，不用 merge-base 的时间：分支中途同步过基线（merge/rebase `main`）后，分叉点会前进到同步进来的那条提交，其时间晚于真实建分支时间
+- 日期一律取 **author date（`%ad`）** 并统一东八区（`TZ=Asia/Shanghai`），不与 committer date 混用（rebase / amend 会让两者大幅偏离）
+- 区间用 `分叉点..分支`：分支自身提交全部保留，同步进来的基线提交自动排除；算不出共同祖先时退化 `分支 --not 基线`
+- 当前分支就是基线（直接在 `main` 上执行）时区间恒为空，退化为整条分支历史并默认只列最近 30 条；分支已合并回基线才是真 0 条，输出一行说明不伪造列表
+- 允许的命令限于 `rev-parse` / `rev-list` / `log` / `show` / `merge-base` / `branch` / `shortlog` / `symbolic-ref`，禁止 `checkout` / `fetch` / `pull` / `merge` / `rebase` / `reset` 等任何改状态操作
+
+**输出**：表头（分支、基线、分叉点、起始时间、提交数、时间跨度、作者数、类型分布）+ 逐条 `短 hash 日期 commit 首行`（超 72 字符截断，不改写不翻译）；随后按 `/common-rules` 规范一补影响范围（只读，无变更）、人工待办与起止时间。
