@@ -1,11 +1,13 @@
 ---
 name: git-summary
-description: 输出指定 git 分支从创建时间开始的精简 commit 摘要列表，默认当前分支，可指定基线分支与是否包含 merge 提交。当用户问"这个分支都改了什么"、"从建分支起做了哪些事"、"分支做了哪些提交/周报素材/发布说明/分支全貌梳理"时触发。支持 /git-summary -h 查看帮助。
+description: 把指定 git 分支自创建时间点以来的 commit message 归并加工成一份功能清单（按功能域聚类、去噪、分新增/修复/口径变更三段，每条带 commit 短 hash 溯源），默认当前分支；只读，不改动仓库状态。当用户问"这个分支做了哪些功能/功能清单/上线内容汇总/从建分支起到现在改了什么"时触发。要原始逐条列表用 --raw。支持 /git-summary -h 查看帮助。
 ---
 
 # git-summary
 
-给定分支（默认当前分支），列出**该分支独有**的提交摘要：分叉点、分支起始时间、逐条一行摘要、类型与作者统计。全程只读，不改动任何 git 状态。
+把一段提交区间里的 commit message **加工成功能清单**，而不是逐条罗列提交。默认区间 = 当前分支的**创建时间点**至今。
+
+> **定位：只读汇总类任务。** 正文即功能清单，不输出 common-rules 规范一的四件套尾注，只压成一行起止时间（详见第四节）。全程只读，禁止任何改动仓库状态的操作。
 
 ## 零、参数处理
 
@@ -16,110 +18,171 @@ description: 输出指定 git 分支从创建时间开始的精简 commit 摘要
 
 选项
   --branch=NAME       目标分支（可选，默认当前分支；支持本地名或 origin/xxx）
-  --base=NAME         基线分支（可选，默认自动探测 origin/HEAD → main → master）
-  --with-merges       列表中包含 merge 提交（可选，默认排除）
-  --limit=N           只列最近 N 条（可选，正整数；表头与统计仍按全量计算，分支即基线时默认 30）
+  --base=NAME         显式指定基线，区间 = 基线..分支（优先级最高）
+  --since=REF         区间起点（tag / 分支 / 日期，如 --since=v1.4.7.4 或 --since=2026-09-01）
+  --limit=N           只取区间内最近 N 条提交参与加工（可选，正整数；默认不限）
+  --raw               输出原始逐条提交列表与统计，不做归并加工
+  --domain-map=PATH   自定义功能域词典文件（每行一个域名，覆盖内置词典）
+  --with-merges       加工时包含 merge 提交（默认排除，merge 提交不携带功能信息）
   -h, --help          显示本帮助
 
+默认区间口径（不加 --base/--since 时）：当前分支创建时间点 → 分支 tip。
+解析顺序：--base → --since → merge-base(默认基线, 分支) → 同族上一版分支 → 最近一个 tag；
+全落空则输出"无功能增量，请显式 --base 或 --since"，不会自动展开整条仓库历史。
+
 示例
-  /git-summary                                  # 当前分支，相对默认基线
-  /git-summary --branch=feature/login           # 指定分支
-  /git-summary --base=develop --branch=feat/x   # 基线是 develop
-  /git-summary --with-merges --limit=20
+  /git-summary                                  # 当前分支自创建点以来的功能清单
+  /git-summary --base=feat-1.3.5                # 只列本版相对上一版的增量
+  /git-summary --since=2026-09-01 --raw         # 原始列表，最近一个月
+  /git-summary --limit=30                       # 只用最近 30 条提交加工
 ```
 
 ---
 
-## 一、参数解析与校验
+## 一、参数解析
 
 | 命令行写法 | 对应参数 |
 |---|---|
-| `--branch=NAME` | `BRANCH`（可选，默认当前分支） |
-| `--base=NAME` | `BASE`（可选，默认自动探测） |
-| `--with-merges` | `MERGE_FLAG`（可选，取 `--no-merges` 或空） |
-| `--limit=N` | `LIMIT`（可选，正整数） |
+| `--branch=NAME` | `BRANCH`（默认 `git branch --show-current`） |
+| `--base=NAME` | `BASE_REF`（可选，最高优先级） |
+| `--since=REF` | `SINCE`（可选，tag / 分支 / 日期） |
+| `--limit=N` | `LIMIT`（可选，正整数；**语义是"区间内最近 N 条提交"**，不是功能项条数） |
+| `--raw` | 原始列表模式 |
+| `--domain-map=PATH` | 自定义功能域词典 |
+| `--with-merges` | 包含 merge 提交 |
 
-- 分支位置参数也接受：`/git-summary feature/login` 等价 `--branch=feature/login`。
-- **时间一律东八区**：所有 git 取时命令前置 `TZ=Asia/Shanghai`（与 common-rules 全局时间规范一致）。
-- 目标与基线分支名统一先解析成可用 ref：先按原样 `git rev-parse --verify --quiet "<name>^{commit}"`，失败再依次试 `refs/heads/<name>`、`refs/remotes/origin/<name>`。
-- `BRANCH` 解析不到 → 报错终止，并列出相近分支供用户选择（`git branch -a --format='%(refname:short)' | head -15`），不猜测。
-- `BASE` 探测顺序（都探测不到则报错要求 `--base`）：
-  1. `git symbolic-ref --short -q refs/remotes/origin/HEAD` 去掉 `origin/` 前缀；
-  2. 依次 `main`、`master`，各自先试本地 `refs/heads/<b>`，再试 `refs/remotes/origin/<b>`。
-- 当前目录不是 git 仓库（`git rev-parse --git-dir` 失败）→ 报错终止。
-- 浅克隆（`git rev-parse --is-shallow-repository` 为 `true`）→ 先告警："浅克隆可能算不出真实分叉点"，继续执行但在输出里标注结果可能不完整；**不得**自行 `git fetch --unshallow`，需要补历史时先征得用户同意。
+- 分支名支持位置参数：`/git-summary feat-1.3.6` 等价 `--branch=feat-1.3.6`。
+- 时间一律东八区：取时命令前置 `TZ=Asia/Shanghai`；日期口径统一 author date（`%ad`），不与 committer date 混用。
+- 分支 ref 解析：原样 `git rev-parse --verify --quiet "<name>^{commit}"`，失败再试 `refs/heads/<name>`、`refs/remotes/origin/<name>`；仍解析不到 → 报错并 `git branch -a --format='%(refname:short)' | head -15` 列出候选，不猜测。
 
-## 二、取值与列表
+## 二、区间解析（决定"从哪开始"）
 
-`BRANCH` 为默认当前分支时用 `git branch --show-current`；输出为空（detached HEAD）且用户未指定 `--branch` → 用 `HEAD` 并在输出里标注"当前处于游离 HEAD"。
+按优先级取第一个可用者作为 `RANGE`：
+
+1. **`--base=<ref>`**：`RANGE="<BASE_REF>..<BRANCH>"`，直接用，不再探测。
+2. **`--since=<ref>`**：`RANGE="<SINCE>..<BRANCH>"`；日期形式用 `RANGE="<BRANCH> --since=<日期>"`。
+3. **分支创建点（默认）**：先定默认基线 `BASE`（`origin/HEAD` → 本地/远端 `main` → `master`），再
+   `START=$(git merge-base "$BASE" "$BRANCH")`，`RANGE="$START..$BRANCH"`。
+   注意：分叉点只用来划区间，**不把它的时间当分支创建时间**（分支中途同步过基线，分叉点会前进）。
+4. **区间为 0 条时的退化链**（分支已并进基线、或分支即基线）：
+   a. 同族上一版分支：分支名带版本号形态（`feat-1.3.6` / `release/1.4.7` / `1.4.7`）时，取族前缀 +
+      `git branch --format='%(refname:short)' | grep -E '^<族前缀>' | sort -V`，拿 `BRANCH` 紧邻的前一个作基线，
+      `RANGE="merge-base(prev, BRANCH)..BRANCH"`；
+   b. 最近一个 tag：`git describe --tags --abbrev=0 "$BRANCH^"`（无 tag 则跳过）→ `RANGE="<tag>..<BRANCH>"`；
+   c. 仍为 0 条 → 输出 `无功能增量：<BRANCH> 相对 <解析到的起点> 没有独有提交，请显式指定 --base=<分支> 或 --since=<tag/日期>` 后结束。
+
+**禁止**：为了"总得输出点东西"而自动展开整条仓库历史。历史上这类大而全输出（300+ 条）没有使用价值。
+
+取数命令（加工输入，`--raw` 用同一份数据）：
 
 ```bash
-export TZ=Asia/Shanghai
-
-# 1. 分叉点（仅用于确定区间，不作为分支创建时间）
-START=$(git merge-base "$BASE" "$BRANCH")
-RANGE="$START..$BRANCH"
-
-# 2. 分支独有提交列表（正序，一行一条）
-git log $MERGE_FLAG --reverse --date=format-local:'%Y-%m-%d' \
-  --pretty=format:'%h %ad %s' $RANGE
-
-# 3. 分支起始时间 = 区间内最早一条提交的时间
-git log $MERGE_FLAG --reverse --date=format-local:'%Y-%m-%d %H:%M:%S' \
-  --pretty=format:'%ad' $RANGE | head -1
-
-# 4. 统计
-git rev-list --count $MERGE_FLAG $RANGE                    # 提交数
-git shortlog -sn $MERGE_FLAG $RANGE | wc -l                # 作者数
-git log $MERGE_FLAG --pretty=format:'%s' $RANGE \
-  | sed -E 's/^([a-z]+):.*/\1/; t; s/.*/other/' \
-  | sort | uniq -c | sort -rn                              # 按 commit 类型分布
+git log $MERGE_FLAG --reverse --date=format-local:'%Y-%m-%d' --pretty=format:'%h|%ad|%s' $RANGE
 ```
 
-**时间口径（强制）**：起点、跨度、列表日期一律取 **author date（`%ad`）**，不得与 committer date（`%cd`）混用——rebase、amend、`--date=` 造数据都会让两者相差很大，混用会让"分支起始时间"看着莫名其妙。
+- `--limit=N` 时**先去噪（3.2）再截断**：从过滤后剩余的提交里按时间取最近 N 条，再正序加工（命令上是 `git log $MERGE_FLAG --reverse` 取全量后截断，不是 `git log -N` 先截断，否则小 `N` 容易被台账类提交占满、清单落空）。
+- 取到列表后同时记录：区间起点短 hash 及其时间、区间提交数、时间跨度（首末条日期），供表头与起止行使用。
+- 空首行提交（`no message`）保留在计数里，加工时按 3.2 归入"未列入"。
 
-**为什么不能用 merge-base 的时间当创建时间**：分支中途同步过基线（merge/rebase `main`）后，分叉点会前进到同步进来的那条提交，其时间晚于分支真实创建时间。因此分叉点只用来划区间，**分支起始时间取区间内最早一条独有提交**。
+## 三、加工算法（五步，全部在本 skill 内由模型执行，不依赖脚本）
 
-**列表语义**：`$START..$BRANCH` 是"可从 BRANCH 到达、不可从分叉点到达"的集合，分支自己的提交全部保留，基线侧被同步进来的提交自动排除，无需再手工过滤。若 `git merge-base` 因历史被改写而算不出共同祖先，改用 `git log $BRANCH --not $BASE`（同样语义），并在输出里注明"未找到共同祖先，已按 `--not 基线` 计算"。
+`拆 → 去噪 → 归并 → 定性 → 溯源`
 
-**分支即基线时退化**：`START` 等于 `BRANCH` 本身（`BASE` 与 `BRANCH` 是同一分支，如直接在 `main` 上执行）时，`$START..$BRANCH` 恒为空，改取整条分支历史 `git log $BRANCH`，"分支起始时间"取该分支最早一条提交，并在表头标注 `分支即基线，按整条历史输出`；此情形默认按 `--limit=30` 只列最近 30 条（用户显式传了 `--limit` 时以其为准），表头写明 `共 N 条，仅列最近 K 条`。
+### 3.1 拆：提交首行切子句
 
-## 三、输出格式
+- 分隔符只认：`，`、`；`、`。`、` + `、`①②③④⑤⑥⑦⑧⑨`、换行。**顿号 `、` 与斜杠 `/` 不切**——前者是并列名词、后者常在同一个名词里（如 `订房/订餐双信封`），切开会把一件事拆坏。
+- 一个子句 = 一个候选功能点；切出的子句不足 6 个字符或无名词主语的，并回前一句，不单独成项。
+- 括号里的 scope（如 `feat(chat-style):`）只用于判断归属模块，不作为功能名。
 
-```
-## 分支摘要：<BRANCH>（基线 <BASE>）
+### 3.2 去噪：不入清单但计数
 
-分叉点：<START 短 hash> <分叉点日期>
-起始时间：<区间最早提交时间>（分支独有第一条）
-提交数：N 条（不含 merge；含 merge 共 M 条）｜时间跨度：<起> ~ <止>｜作者：K 人
-类型分布：feat 5 · fix 3 · docs 1 · other 2
+命中任一条即丢弃，并在末尾"未列入"一行按类别计数：
 
-| # | commit | 日期 | 说明 |
-|---|---|---|---|
-| 1 | a1b2c3d | 2026-09-03 | feat: 新增 /git-summary skill |
-| 2 | e4f5g6h | 2026-09-04 | fix: 修正 nginx 证书路径 |
-```
-
-- 说明列取 commit message **首行原文**，不改写、不翻译、不补全；超过 72 字符按 71 字符 + `…` 截断。
-- 首行没有 `类型:` 前缀的提交照原样列出，类型分布里计入 `other`。
-- 传 `--limit=N` 时按时间正序取**最近 N 条**；分支即基线的退化输出未指定 `--limit` 时按默认 30 条。两者都在表格上方标注 `共 M 条，仅列最近 N 条`，统计行仍按全量计算。
-- 提交数为 0 时不输出空表格，改为一行说明（见第四节）。
-- 输出后按 common-rules 规范一补：影响范围（本 skill 全程只读，写"无变更"）、人工待办（无则 `1. 无`）、开始/结束时间（东八区实测，不估算）。
-
-## 四、边界与回退
-
-| 情形 | 处理 |
+| 类别 | 判据 |
 |---|---|
-| 区间 0 条（分支已合并回基线） | 不报错，输出一行：`<BRANCH> 相对 <BASE> 无独有提交（分叉点 <hash> <日期>）`，不伪造列表 |
-| `BRANCH` 与 `BASE` 是同一分支（直接在 `main` 上执行） | 按第二节"分支即基线时退化"处理：取整条分支历史，默认只列最近 30 条，表头标注 `分支即基线，按整条历史输出` |
-| detached HEAD 且未指定 `--branch` | 用 `HEAD`，输出表头标注"游离 HEAD（非分支）" |
-| 分支基于其它特性分支创建 | 结果会包含父特性分支的独有提交；在输出末尾提示"如需只统计本分支增量，用 `--base=<父分支>` 重跑" |
-| 目标分支与基线历史完全不相干（如孤儿分支） | 按 `--not 基线` 输出全量并在表头注明无共同祖先 |
+| 台账/留痕 | `台账`、`落账`、`留痕`、`补记`、`第 N 次`、`批…对齐` |
+| 纯取证/跑测 | `test:` 前缀且只宣告通过/失败/负例/首轮，未同时给出判据或口径变更 |
+| 裸词无对象 | `update`、`docs`、`chore`、`style` 等单字词，或"格式调整/临时调整/整理代码/小步调整/讨论后补充"这类判定不出对象的 |
+| 空 message | `no message`、首行为空 |
+| 无外部行为变化 | `refactor` / `chore` 且不改外部行为（表结构、接口、页面、口径、配置生效范围）；确有外部影响的进「内部改造」一行带过 |
 
-## 五、注意事项
+### 3.3 归并：按功能域聚类
 
-- **只读**：允许的命令限于 `git rev-parse` / `rev-list` / `log` / `show` / `merge-base` / `branch` / `shortlog` / `symbolic-ref`。禁止 `checkout`、`switch`、`fetch`、`pull`、`rebase`、`merge`、`reset`、`gc` 等任何改动工作区或仓库状态的命令；确需补历史（浅克隆）时先征得用户同意。
-- 不写入任何文件，结果只输出到对话；用户明确要求导出时才写 `<分支名>-summary.md` 到当前目录并告知路径。
-- 不输出 commit 正文全文与 diff，不贴大段原始日志；列表逐条只保留 `hash + 日期 + 首行`。
-- 统计数字与表格必须由同一组命令产出，禁止凭记忆或估算填写；分支、区间、计数有不确定时先跑命令确认。
-- 本 skill 只做"读历史、给摘要"，不判定代码质量、不做发布风险评估，也不代替用户决定是否合并。
+- 归并键 = 子句里的名词主语（表名 / 模块 / 接口路径 / 页面 / 功能名）。同一功能域内"做了同一件事"的子句合成一行。
+- 一条提交命中多个功能域时，**分别落到各自功能项下**（这是多数长提交的正常形态，不要为省事压成一项）。
+- 内置功能域词典（`--domain-map=<文件>` 可整体覆盖，文件每行一个域名）：
+
+```
+库存与签收
+申购与采购
+退款与余额
+核销与履约
+订单与支付
+会员与登录鉴权
+四诊与报告
+AI 问诊
+商城与商品
+门店端与BOSS
+数据库与迁移
+部署与配置
+安全与合规
+小程序与移动端
+```
+
+- 落不进任何域的子句归 `其它`，不得强行塞进现有域。
+
+### 3.4 定性：每个功能项打一个标签
+
+只有三段——**新增 / 修复 / 口径与约定变更**（含判定标准、计算口径、字段语义的调整）。refactor 类只在改变外部行为时入清单，且按实际影响归入上述三段之一。
+
+### 3.5 溯源：每个功能项必须挂 hash
+
+- 每个功能项末尾挂 ≥1 个 commit 短 hash，形如 `（046484a, 513297a）`。
+- **挂不上 hash 的项不允许存在**；一个 hash 可支撑多项，一项也可由多个 hash 共同支撑。
+
+## 四、输出契约
+
+正文只有清单，不加寒暄、不加建议、不解释过程：
+
+```
+## 功能清单：<BRANCH>（区间 <START短hash>..<BRANCH短hash>，N 条提交 → M 个功能点）
+
+### 新增
+- **<功能名>**：<做了什么，一到两个分句，保留原文里的数字/错误码/接口路径>（<hash, hash>）
+
+### 修复
+- **<问题点>**：<修成什么样>（<hash>）
+
+### 口径与约定变更
+- <变更内容>（<hash>）
+
+### 内部改造
+<一句话，仅在存在时输出>（<hash>）
+
+> 未列入：a 条台账/留痕、b 条裸 update/空 message、c 条纯取证提交。
+
+起止：<开始时间> ~ <结束时间>（东八区）
+```
+
+- 三段（新增 / 修复 / 口径与约定变更）固定渲染，某段无内容时该段写一行 `（无）`；`### 内部改造` 与 `> 未列入：` 两段**仅在确有内容时**输出。同一区间多次运行，输出形状必须一致。
+- 功能项按重要度排序（影响资金/履约/权限的先列），不按 commit 顺序。
+- 功能项超过 60 条时截断到 60 条并提示：`另有 x 个功能项未渲染，可用 --limit=N 收窄提交范围`。
+- 最后一行起止时间即本 skill 对 common-rules 规范一的替代尾注：只读汇总任务，不输出影响范围/人工待办/飞书通知段。
+- **`--raw` 模式**改为输出原始列表与统计：表头（分支、基线、分叉点、区间起始时间、提交数、时间跨度、作者数、类型分布）+ 逐条 `短 hash 日期 首行`（首行超 72 字符截为 71 + `…`）。分支即基线时区间为空，按第二节退化链处理，不展开整条历史。
+
+## 五、硬约束（防止编造）
+
+1. **信息源只有 commit message 首行**（区间内取到的那批）。禁止读 diff、代码、文档去"补全"功能；禁止用外部知识命名一个提交里没有出现过的功能。
+2. 功能项措辞只允许使用提交原文出现过的名词与结论；原文里的数字、错误码、接口路径、表名（如"未知分类判 400"、`chat_style_tag_bindings`）必须原样保留，不得泛化、不得四舍五入、不得改成"某接口""某表"。
+3. 不得跨类型、跨渠道合并表述：原文按 `orderType` / 渠道 / 端 分句描述不同结论时，归并后必须各留各的，压成一句即判错。
+4. 判定不了对象的一律进「未列入」，禁止猜一个功能名凑数；禁止为了三段齐全而把"内部改造"抬成"新增"。
+5. 输出功能项数不得超过拆出的子句总数；每条必须可 hash 溯源；无增量时按第二节输出"无功能增量"，不铺历史。
+6. 统计数字（提交数、未列入计数、起止时间）必须来自本次实测命令输出，禁止估算或复用上一轮结果。
+
+## 六、只读边界与回退
+
+- 允许命令：`git rev-parse` / `rev-list` / `log` / `show` / `merge-base` / `describe` / `branch` / `shortlog` / `symbolic-ref`。禁止 `checkout`、`switch`、`fetch`、`pull`、`merge`、`rebase`、`reset`、`gc` 等任何改状态操作；需要补历史（浅克隆 `git rev-parse --is-shallow-repository` 为 true）时先征得用户同意。
+- 不写文件，结果只输出到对话；用户显式要求导出时才写 `<分支名>-features.md` 到当前目录并告知路径。
+- detached HEAD 且未指定 `--branch` → 用 `HEAD`，表头标注"游离 HEAD（非分支）"。
+- 分支基于其它特性分支创建 → 区间会含父分支提交，末尾提示"如需只统计本分支增量，用 `--base=<父分支>` 重跑"。
+- 浅克隆算不出分叉点 → 提示结果可能不完整，退化到 `git log $BRANCH --not $BASE` 并在表头注明"未找到共同祖先"。
+- 本 skill 只做"读提交信息、归并成清单"，不判定代码质量、不做发布风险评估、不代替用户决定是否合并。
