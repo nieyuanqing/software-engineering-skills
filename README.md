@@ -398,11 +398,12 @@ software-engineering-skills/
 **用法**
 
 ```bash
+export AIBUG_PASSWORD='<口令>'            # 口令在自己的 shell 里设置，不进命令行
 /aibug --host=http://your-server:8082 \
-  --username=admin --password=secret \
+  --username=admin --password-env=AIBUG_PASSWORD \
   --project-id=1                         # 全参数指定，直接开始
-/aibug --host=... --username=... --password=... \
-  --project-id=1 --bug-id=170           # 只处理 #170，状态按该 #bugId 回写
+/aibug --host=... --username=... --password-env=AIBUG_PASSWORD \
+  --project-id=1 --bug-id=170            # 只处理 #170，状态按该 #bugId 回写
 /aibug                                   # 交互式，逐一询问参数
 /aibug -h                                # 查看帮助
 ```
@@ -413,8 +414,10 @@ software-engineering-skills/
 |---|---|
 | `--host` | aibug 系统 Base URL |
 | `--username` | 登录账号 |
-| `--password` | 登录密码 |
+| `--password` | 登录密码（不推荐：明文会进 shell 历史与对话） |
 | `--project-id` | 项目 ID |
+
+> 口令优先用 `--password-env=VAR` 从环境变量读取（优先于 `--password`）。原因：命令执行链上的凭据脱敏会把 `-d '{"...","password":"<值>"}'` 的值改写成 `***`，服务端按 BCrypt 正常拒绝，返回与"口令错"同文案的 401；请求体必须由程序内 `json.dumps` 组装、只从 `os.environ` 取值。
 
 **可选参数：**
 
