@@ -92,21 +92,36 @@ Bug 字段说明
 
 ## 二、认证
 
-用 Bash 工具执行以下请求，提取 `token` 字段：
+**顺序硬约束：先登录 → 取到 `token` → 才允许访问任何其它接口。** 登录未成功（含响应含 `error`、HTTP 非 200、
+`token` 字段缺失或为空）之前，禁止发起 `/bugs/next`、`/bugs/{id}` 等任何请求，也不得"先拿空 token 试一下"。
 
 ```bash
-curl -s -X POST "{HOST}/aibug/api/auth/login" \
+RESP=$(curl -s -w '\n%{http_code}' -X POST "{HOST}/aibug/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"{USERNAME}","password":"{PASSWORD}"}'
+  -d '{"username":"{USERNAME}","password":"{PASSWORD}"}')
+CODE=$(printf '%s' "$RESP" | tail -n1)                 # 状态码，用于分型
+BODY=$(printf '%s' "$RESP" | sed '$d')                 # 响应体，含 token
 ```
 
-**响应**（成功）：
+不把响应写进任何文件（`token` 属凭据），只在当前 shell 变量里用。
+
+**响应**（成功，200）：
 ```json
 {"id": 1, "username": "admin", "displayName": "管理员", "token": "<TOKEN>"}
 ```
 
-- 若响应包含 `error` 字段，**立即停止**，向用户报告登录失败原因。
-- 登录成功后将 `token` 存入变量，后续所有请求均带 `Authorization: Bearer <token>` 头。
+- 登录成功即把 `token` 存入变量，之后**每个**请求都带 `Authorization: Bearer <token>`。
+- **失败按状态码分型处理**（报告里必须同时写出状态码与响应体，只抄 message 无法定位）：
+  - `400`：请求构造问题——字段名写错、缺 `Content-Type: application/json`、body 不是合法 JSON（服务端
+    `@Valid @RequestBody` 校验失败）。属可自纠项，改正后**最多重试一次**。
+  - `401` + `用户名或密码错误`：凭据问题。服务端只有"用户不存在"与"口令不匹配"两条路径且都返回同一句话
+    （`AuthService.login`），**分不清是哪一种，也不许猜**。立即停止，向用户报告并索取正确口令；不得换口令
+    反复尝试、不得对同一账号刷登录。
+  - 连接失败 / 超时 / 非 JSON 响应：地址或服务问题，与口令无关，按未开始如实报告。
+- 服务端**没有失败次数锁定机制**，一次失败不会锁号；但同上，凭据错误只能问用户要，不能靠重试解决。
+- 后续任一请求返回 `401`（token 过期或失效）：允许**重新登录一次**刷新 token 后继续该请求；再失败即停止并报告。
+- 口令只用于这一次登录请求：不回显在输出里、不写入任何文件与报告、不放进 commit 信息；用户以
+  `--password=` 传入时，用到即弃。
 
 ---
 

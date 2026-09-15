@@ -424,7 +424,7 @@ software-engineering-skills/
 
 **工作流程**
 
-1. `POST {host}/aibug/api/auth/login` — 登录获取 token
+1. `POST {host}/aibug/api/auth/login` — 登录获取 token（**先登录拿到 token，才允许访问其它接口**；失败按状态码分型：`400` 是请求构造问题可自查后重试一次，`401 用户名或密码错误` 是凭据问题，立即停止向用户索取口令，不猜不刷；服务端无失败锁定）
 2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug；传了 `--bug-id=N` 时跳过队列，改为 `GET {host}/aibug/api/bugs/N` 直接取该条（不限当前状态，本轮终态覆盖原状态），处理完即结束、不回队列
 3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总；**指定模式下不符直接报错终止**，防止跨项目误回写
 4. 标记为 `IN_PROGRESS`，防止重复领取
