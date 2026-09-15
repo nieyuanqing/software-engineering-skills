@@ -25,14 +25,13 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
 选项（通过命令行传入的参数直接使用，不再交互询问）
   --host=URL          aibug 系统 Base URL（如 --host=http://your-server:8082）
   --username=NAME     登录账号
-  --password=PASS     登录密码（不推荐，明文会进 shell 历史与对话）
-  --password-env=VAR  口令从环境变量 VAR 读取（推荐，优先于 --password；如 AIBUG_PASSWORD）
+  --password=PASS     登录密码
   --project-id=N      项目 ID（必填，未指定直接报错；如 --project-id=1）
   --bug-id=N          只处理指定 Bug（可选，正整数；指定后跳过队列，状态按该 #bugId 回写）
   -h, --help          显示本帮助
 
 工作流程
-  1. POST {host}/aibug/api/auth/login          登录，获取 token（口令只从环境变量注入，绝不进命令行）
+  1. POST {host}/aibug/api/auth/login          登录，获取 token（请求体程序内组装，口令不写成 JSON 连写进命令行）
   2. GET  {host}/aibug/api/bugs/next           获取下一个 PENDING Bug
      （传了 --bug-id=N 时改为 GET {host}/aibug/api/bugs/N 直接取该条，不限当前状态）
   3. PUT  {host}/aibug/api/bugs/{id}/status    标记为 IN_PROGRESS
@@ -57,8 +56,7 @@ Bug 字段说明
               已修复 / 待修复 / 验证
 
 示例
-  export AIBUG_PASSWORD='<口令>'      # 由用户在自己的 shell 里设置
-  /aibug --host=http://your-server:8082 --username=admin --password-env=AIBUG_PASSWORD --project-id=1
+  /aibug --host=http://your-server:8082 --username=admin --password=secret --project-id=1
   /aibug -h
 ```
 
@@ -72,8 +70,7 @@ Bug 字段说明
 |---|---|
 | `--host=URL` | `HOST`（必填，无默认值） |
 | `--username=NAME` | `USERNAME`（必填，无默认值） |
-| `--password=PASS` | `PASSWORD`（必填，无默认值；**不推荐**，明文会进 shell 历史与对话） |
-| `--password-env=VAR` | `PASSWORD_ENV`（可选，**优先于 `--password`**：口令从环境变量 `VAR` 读取，命令行里不出现口令值） |
+| `--password=PASS` | `PASSWORD`（必填，无默认值） |
 | `--project-id=N` | `PROJECT_ID`（必填，无默认值） |
 | `--bug-id=N` | `BUG_ID`（可选，正整数；指定后**只处理该条 Bug**，跳过 `/bugs/next` 队列，状态按该 `#bugId` 回写） |
 
@@ -81,9 +78,8 @@ Bug 字段说明
 
 - **`PROJECT_ID` 必须通过 `--project-id=N` 显式指定**：未指定时**直接报错终止**（输出 `错误：缺少 --project-id=N，必须指定项目 ID`），不交互询问、不继续执行。
 - **`BUG_ID` 可选，指定时必须是正整数**（如 `--bug-id=170`）：非法值（非数字、0、负数、带空格）直接报错终止（输出 `错误：--bug-id=N 必须为正整数`），不静默忽略、不退回队列模式。
-- **口令优先走环境变量**：`--password` 与 `--password-env` 同时给出时以后者为准；只给了 `--password=<明文>`
-  时，在开始执行前提示一次"建议改在自己 shell 里 `export AIBUG_PASSWORD=…` 后用 `--password-env=AIBUG_PASSWORD`
-  传入"（原因见第二节：命令行里的口令值会被凭据脱敏改写），提示完仍可继续，不强制中断。
+- **`PASSWORD` 仍由 `--password=PASS` 传入**（不新增其它口令参数）：口令值只用于登录那一次请求，
+  装配请求体的方式见第二节——**不得**以 `"password":"<值>"` 的连写形态出现在命令行。
 - 其余必填参数缺失时**一次性列出**，统一交互询问：
 
 | 参数 | 说明 |
@@ -101,16 +97,15 @@ Bug 字段说明
 **顺序硬约束：先登录 → 取到 `token` → 才允许访问任何其它接口。** 登录未成功（含响应含 `error`、HTTP 非 200、
 `token` 字段缺失或为空）之前，禁止发起 `/bugs/next`、`/bugs/{id}` 等任何请求，也不得"先拿空 token 试一下"。
 
-**凭据不进命令行（必做）**：口令一律经环境变量注入，**禁止**把口令字面量写进 `curl` 的 `-d` /
-`--data-raw` / URL，或任何被 eval 的命令行片段。命令执行链上的凭据脱敏会把 `"password":"<值>"` 的值改写成
-`***`（3 字符），服务端按 BCrypt 正常拒绝，返回 **401 + `用户名或密码错误`**——文案与"真的口令错"完全一致，
-从响应体无从区分。请求体一律在程序内用 `json.dumps` 组装、只从 `os.environ` 取值：
+**请求体禁止内联凭据（必做）**：`--password` 传进来的值**先落到 shell 变量**，再交给程序组装，**禁止**把口令
+字面量写进 `curl` 的 `-d` / `--data-raw` / URL，即命令行里不得出现 `"password":"<值>"` 这种连写形态。命令执行链
+上的凭据脱敏会把该形态的值改写成 `***`（3 字符），服务端按 BCrypt 正常拒绝，返回 **401 + `用户名或密码错误`**
+——文案与"真的口令错"完全一致，从响应体无从区分。请求体一律在程序内用 `json.dumps` 组装：
 
 ```bash
-python3 - <<'PY'
-import hashlib, json, os, urllib.error, urllib.request
-host, user = os.environ["AIBUG_HOST"], os.environ["AIBUG_USERNAME"]
-pw = os.environ.get("AIBUG_PASSWORD") or ""
+python3 - "$HOST" "$USERNAME" "$PASSWORD" <<'PY'
+import hashlib, json, sys, urllib.error, urllib.request
+host, user, pw = sys.argv[1], sys.argv[2], sys.argv[3]
 body = json.dumps({"username": user, "password": pw}).encode()
 print(f"body_bytes={len(body)} pw_len={len(pw)} pw_sha={hashlib.sha256(pw.encode()).hexdigest()[:12]}")
 req = urllib.request.Request(f"{host}/aibug/api/auth/login", data=body,
@@ -125,7 +120,6 @@ except urllib.error.URLError as e:
 PY
 ```
 
-`AIBUG_HOST` / `AIBUG_USERNAME` / `AIBUG_PASSWORD` 由用户在**自己的 shell** 里 export，skill 不代填口令值；
 上述输出同时给出口令长度与 sha 前 12 位，够做自检，不泄露原文。
 
 **响应**（成功，200）：
@@ -140,8 +134,8 @@ PY
     `len(json.dumps(...))`）。被改写成 `***` 时**差值恒为 4**（带引号的口令 9 字节 → `"***"` 5 字节，即原口令 7 字符），但绝对值
     随 JSON 分隔符风格变：紧凑写法 `{"username":"admin",...}` 是 41 → 37，`json.dumps` 默认带空格是
     44 → 40，所以要比的是**同一组装方式下"预期 vs 实际发出"**，别拿别处的绝对值来对；
-  ② 换一种**不经 shell 引号与脱敏**的发送姿势复测（程序内组装 body，如上面的 urllib）；
-  ③ 两种姿势结果不一致 → 结论是**本地传参链路问题**：改走环境变量姿势重发，**不得**向用户索取口令、
+  ② 换一种**不经 shell 引号与脱敏**的发送姿势复测（按上面程序内组装 body 的 urllib 写法）；
+  ③ 两种姿势结果不一致 → 结论是**本地传参链路问题**：改用程序内组装 body 的姿势重发，**不得**向用户索取口令、
     **不得**计入登录失败次数；两种姿势一致且自检通过仍 401，才允许判定为凭据问题。
 - **失败按状态码分型处理**（报告里必须同时写出状态码与响应体，只抄 message 无法定位）：
   - `400`：请求构造问题——字段名写错、缺 `Content-Type: application/json`、body 不是合法 JSON（服务端
@@ -455,8 +449,9 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - `PROJECT_ID` 必须通过命令行 `--project-id=N` 传入；缺失时直接报错终止，不做交互询问兜底。
 - `--bug-id=N` 为可选的指定模式：跳过 `/bugs/next`，只处理并按该 `#bugId` 回写这一条，不限原状态但会覆盖原状态；处理完即结束，不回队列，也不触碰任何其它 Bug。
 - **状态回写只允许按 `#bugId` 的单条接口** `PUT /aibug/api/bugs/{id}/status`；后端另有 `PUT /aibug/api/bugs/batch/status`（`ids` 数组批量改多条），本 skill 一律禁用，详见"状态回写寻址约束"。
-- 口令只用于登录请求，不写入任何文件，不在日志中明文输出；**一律经环境变量注入，不进命令行**（命令行里的
-  口令值会被凭据脱敏改写成 `***`，造成与"口令错"同文案的 401）。
+- 口令仍由 `--password=PASS` 传入，只用于登录那一次请求，不写入任何文件、不在日志中明文输出；但值必须先落 shell
+  变量再由程序 `json.dumps` 组装请求体，命令行里**不得**出现 `"password":"<值>"` 连写形态（会被凭据脱敏改写成
+  `***`，造成与"口令错"同文案的 401）。
 - 对外报告 401 时，结论必须写成 `凭据校验未通过（本地传参改写已排除 / 未排除）`，**不得**单说"口令错误"；
   自检未做或未排除时，不得向用户索取新口令。
 - `FAILED` 状态必须提供 `failReason`，`PARTIALLY_FIXED` 状态必须提供 `fixNote`，否则 API 返回 400。

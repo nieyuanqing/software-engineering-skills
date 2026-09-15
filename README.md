@@ -398,11 +398,10 @@ software-engineering-skills/
 **用法**
 
 ```bash
-export AIBUG_PASSWORD='<口令>'            # 口令在自己的 shell 里设置，不进命令行
 /aibug --host=http://your-server:8082 \
-  --username=admin --password-env=AIBUG_PASSWORD \
+  --username=admin --password=secret \
   --project-id=1                         # 全参数指定，直接开始
-/aibug --host=... --username=... --password-env=AIBUG_PASSWORD \
+/aibug --host=... --username=... --password=... \
   --project-id=1 --bug-id=170            # 只处理 #170，状态按该 #bugId 回写
 /aibug                                   # 交互式，逐一询问参数
 /aibug -h                                # 查看帮助
@@ -414,10 +413,10 @@ export AIBUG_PASSWORD='<口令>'            # 口令在自己的 shell 里设置
 |---|---|
 | `--host` | aibug 系统 Base URL |
 | `--username` | 登录账号 |
-| `--password` | 登录密码（不推荐：明文会进 shell 历史与对话） |
+| `--password` | 登录密码 |
 | `--project-id` | 项目 ID |
 
-> 口令优先用 `--password-env=VAR` 从环境变量读取（优先于 `--password`）。原因：命令执行链上的凭据脱敏会把 `-d '{"...","password":"<值>"}'` 的值改写成 `***`，服务端按 BCrypt 正常拒绝，返回与"口令错"同文案的 401；请求体必须由程序内 `json.dumps` 组装、只从 `os.environ` 取值。
+> 口令继续用 `--password` 传入，但值先落 shell 变量、请求体由程序内 `json.dumps` 组装，命令行里不得出现 `-d '{"...","password":"<值>"}'` 这种连写形态：命令执行链上的凭据脱敏会把它改写成 `***`，服务端按 BCrypt 正常拒绝，返回与"口令错"同文案的 401。判定为凭据问题之前必须先做传参自检（核对发出字节数与预期、换程序内组装姿势复测）。
 
 **可选参数：**
 
@@ -427,7 +426,7 @@ export AIBUG_PASSWORD='<口令>'            # 口令在自己的 shell 里设置
 
 **工作流程**
 
-1. `POST {host}/aibug/api/auth/login` — 登录获取 token（**先登录拿到 token，才允许访问其它接口**；失败按状态码分型：`400` 是请求构造问题可自查后重试一次，`401 用户名或密码错误` 是凭据问题，立即停止向用户索取口令，不猜不刷；服务端无失败锁定）
+1. `POST {host}/aibug/api/auth/login` — 登录获取 token（**先登录拿到 token，才允许访问其它接口**；失败按状态码分型：`400` 是请求构造问题可自查后重试一次，`401 用户名或密码错误` 须先过传参自检确认不是本地改写，才按凭据问题立即停止向用户索取口令，不猜不刷，对外结论写明"本地传参改写已排除/未排除"；服务端无失败锁定）
 2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug；传了 `--bug-id=N` 时跳过队列，改为 `GET {host}/aibug/api/bugs/N` 直接取该条（不限当前状态，本轮终态覆盖原状态），处理完即结束、不回队列
 3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总；**指定模式下不符直接报错终止**，防止跨项目误回写
 4. 标记为 `IN_PROGRESS`，防止重复领取
