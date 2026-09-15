@@ -431,10 +431,11 @@ software-engineering-skills/
 3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总；**指定模式下不符直接报错终止**，防止跨项目误回写
 4. 标记为 `IN_PROGRESS`，防止重复领取
 5. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码，逐条核对 Bug 中的问题点
-6. 按判定结果回传终态：问题点全部修复且验证通过 → `FIXED`；仅部分问题点修复（已修复部分验证通过）→
+6. 按判定结果回传终态（状态码 `AI_FIXED` 在 aibug 界面显示「AI 修复」，`RESOLVED`「已解决」为人工闭环状态、本 skill 不回传）：问题点全部修复且验证通过 →
+   `AI_FIXED`；仅部分问题点修复（已修复部分验证通过）→
    `PARTIALLY_FIXED`；该改而未改或验证不通过 → `FAILED`。**已修复/重复修复**（代码中已有覆盖该问题点的修复、
    本轮零改动，含上一轮回传失败被重新领取、同一问题重复报单）→ 按 `content` 原现象实测复验，复验确认现象已消失
-   即按该 Bug 的 `#id` 回传 `FIXED`，**不得**标 `FAILED` 或为留痕改成 `PARTIALLY_FIXED`（`FIXED` 不保存说明字段，
+   即按该 Bug 的 `#id` 回传 `AI_FIXED`，**不得**标 `FAILED` 或为留痕改成 `PARTIALLY_FIXED`（`AI_FIXED` 不保存说明字段，
    判据留在台账与汇总）；复验仍能复现或无从验证才回到 `FAILED` 判定。说明字段一律结构化、按固定标签分行填写（值内单个 `\n`
    即断行，禁止揉成一段文字、禁止空行）：`fixNote` = `已修复 / 待修复 / 验证`，`failReason` = `现象 / 定位 /
    下一步`，单行 ≤60 字符、整体 ≤200 字符。这两个字段在 aibug 查看弹窗按 **markdown 渲染**，字段值必须是纯文本：不写粗体/行内
@@ -444,7 +445,7 @@ software-engineering-skills/
    base64 内联图会被过滤成空 href/src）
 7. 每次 PUT 后回读 `GET /bugs/{id}` 逐行确认状态与说明字段的三个标签行落库一致，再循环回到第 2 步，直到队列清空。**回写寻址硬约束**：状态只走按当前 `#bugId` 的单条接口 `PUT /bugs/{id}/status`，**禁用**批量接口 `PUT /bugs/batch/status`；PUT 路径、PUT 响应里的 `id`、回读路径三处必须完全相同，且只取本轮 Bug 卡的 `id`（不从台账或历史结论里推断）；出现不一致立即终止（指定模式终止整个执行），记为回写异常，不改写任何其它 Bug
 
-完成后输出汇总：处理总数、FIXED 数量（其中已修复/重复修复、本轮零改动 m 个，逐条 #id 与已存在修复位置）、PARTIALLY_FIXED 数量及各自 `待修复` 行原文、FAILED 数量及 `现象`+`下一步` 行原文、项目校验不通过清单、回写异常（ID 不一致已终止）清单。`PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取；`待修复` 与 `下一步` 两行同时进入人工待办，`@角色` 按行内点名的归属填写。
+完成后输出汇总：处理总数、AI_FIXED 数量（其中已修复/重复修复、本轮零改动 m 个，逐条 #id 与已存在修复位置）、PARTIALLY_FIXED 数量及各自 `待修复` 行原文、FAILED 数量及 `现象`+`下一步` 行原文、项目校验不通过清单、回写异常（ID 不一致已终止）清单。`PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取；`待修复` 与 `下一步` 两行同时进入人工待办，`@角色` 按行内点名的归属填写。
 
 ---
 
