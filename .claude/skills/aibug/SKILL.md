@@ -49,7 +49,7 @@ Bug 字段说明
   content     Bug 描述文本（说明需要修复的内容）
   fileUrls    附件相对路径（截图等，相对于 host）
   status      当前状态：PENDING（待处理）/ IN_PROGRESS（处理中）
-              / AI_FIXED（AI 修复）/ AI_PARTIALLY_FIXED（AI 部分修复）/ FAILED（失败）
+              / AI_FIXED（AI 修复）/ AI_PARTIALLY_FIXED（部分修复，徽标显示「AI 半修」）/ FAILED（失败）
               / RESOLVED（已解决，人工闭环状态，本 skill 不回传）/ CLOSED（已关闭）
   failReason  失败原因（状态为 FAILED 时必填），固定三行纯文本：
               现象 / 定位 / 下一步
@@ -458,8 +458,8 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - `FAILED` 状态必须提供 `failReason`，`AI_PARTIALLY_FIXED` 状态必须提供 `fixNote`，否则 API 返回 400。
 - `fixNote` / `failReason` 一律按 3.4 的三行标签结构回写（值内用单个 `\n` 分行），禁止写成一段连续文字。
 - 这两个字段在 aibug 查看弹窗按 **markdown 渲染**，字段值必须是纯文本标签行：不写 markdown 标记（粗体、行内代码、表格、引用、成对 `*`/`_`、删除线），行首不用 `#`+空格与 `-`、`+`、`*`、`数字.`，不写空行与代码块围栏；尖括号本身安全（raw HTML 会被转义成正文），但 `<url>` 形态会变成自动链接，写地址统一用 markdown 链接语法，且只允许 `http/https` 或站内相对路径。
-- 服务端对 `status` 做枚举校验（PENDING / IN_PROGRESS / AI_FIXED / AI_PARTIALLY_FIXED / FAILED / RESOLVED / CLOSED；显示名 `AI_FIXED`=「AI 修复」、`RESOLVED`=「已解决」、`AI_PARTIALLY_FIXED`=「AI 部分修复」），非法值返回 HTTP 400 及 `{"error": ...}`；每次 PUT 后必须检查响应中的 `error` 字段，出现则视为更新失败。
-- 回传 `AI_FIXED` / `AI_PARTIALLY_FIXED` 得到 400 非法值，说明该环境尚未执行状态更名迁移（`FIXED` → `AI_FIXED`、`PARTIALLY_FIXED` → `AI_PARTIALLY_FIXED`；`deploy-conf/db/migrations/aibug/V9__rename_fixed_to_ai_fixed.sql` 只订正了前者）：如实报告「该环境状态枚举未升级」并停止回写，**不得**改回 `FIXED` / `PARTIALLY_FIXED` 试探（已升级环境只认 `AI_` 系码，两代码不可混用）。
+- 服务端对 `status` 做枚举校验（PENDING / IN_PROGRESS / AI_FIXED / AI_PARTIALLY_FIXED / FAILED / RESOLVED / CLOSED；显示名 `AI_FIXED`=「AI 修复」、`AI_PARTIALLY_FIXED`=「AI 半修」（语义名仍是"部分修复"，徽标宽度上限只容 4 字）、`RESOLVED`=「已解决」），非法值返回 HTTP 400 及 `{"error": ...}`；每次 PUT 后必须检查响应中的 `error` 字段，出现则视为更新失败。
+- 回传 `AI_FIXED` / `AI_PARTIALLY_FIXED` 得到 400 非法值，说明该环境尚未执行状态更名迁移（`FIXED` → `AI_FIXED` 见 `V9__rename_fixed_to_ai_fixed.sql`、`PARTIALLY_FIXED` → `AI_PARTIALLY_FIXED` 见 `V10__rename_partially_fixed.sql`，均在 `deploy-conf/db/migrations/aibug/`）：如实报告「该环境状态枚举未升级」并停止回写，**不得**改回 `FIXED` / `PARTIALLY_FIXED` 试探（已升级环境只认 `AI_` 系码，两代码不可混用）。
 - 读到响应里出现未订正的历史值 `FIXED` / `PARTIALLY_FIXED`（枚举已升级、数据未跟进的历史行）时，按原样记入台账并在汇总里点出，不猜测其含义、不试图批量订正——本 skill 只按 `#bugId` 单条回写。
 - `AI_PARTIALLY_FIXED` 只用于"确有代码改动且已改动部分验证通过"的情形：全量修好一律 `AI_FIXED`，禁止用它搪塞未验证的修复。本轮一点未改时**先按原现象复验再定状态**：复验确认现象已消失（已修复/重复修复）一律回传 `AI_FIXED`，只有复验仍能复现且确实无法修复、或改动后验证不通过，才 `FAILED`。
 - 每次修复前先标记 `IN_PROGRESS`，确保同一 Bug 不被并发处理。
