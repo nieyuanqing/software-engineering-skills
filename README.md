@@ -429,7 +429,7 @@ software-engineering-skills/
 1. `POST {host}/aibug/api/auth/login` — 登录获取 token（**先登录拿到 token，才允许访问其它接口**；失败按状态码分型：`400` 是请求构造问题可自查后重试一次，`401 用户名或密码错误` 须先过传参自检确认不是本地改写，才按凭据问题立即停止向用户索取口令，不猜不刷，对外结论写明"本地传参改写已排除/未排除"；服务端无失败锁定）
 2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug；传了 `--bug-id` 时跳过队列，按清单顺序逐个 `GET {host}/aibug/api/bugs/<id>` 取卡（不限当前状态，本轮终态覆盖原状态），全部处理完即结束、不回队列
 3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总；**指定模式下单 ID 不符直接报错终止、多 ID 记异常跳过该条继续**，防止跨项目误回写
-4. 标记为 `IN_PROGRESS`，防止重复领取（**仅队列模式**；指定模式跳过，取卡到终态回写之间保持原状态，避免原状态与 `fixNote`/`failReason` 被提前清空且不可恢复）
+4. 标记为 `IN_PROGRESS`，防止重复领取（队列与指定模式都执行；处理完毕再按第 6 步回写终态并回读确认）
 5. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码，逐条核对 Bug 中的问题点
 6. 按判定结果回传终态（状态码 `AI_FIXED` 在 aibug 界面显示「AI 修复」，`RESOLVED`「已解决」为人工闭环状态、本 skill 不回传）：问题点全部修复且验证通过 →
    `AI_FIXED`；仅部分问题点修复（已修复部分验证通过）→
