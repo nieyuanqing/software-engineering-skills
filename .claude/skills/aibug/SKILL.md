@@ -15,7 +15,8 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
 
 ## 零、参数处理
 
-**如果用户传入 `-h` 或 `--help`**，不执行任何操作，直接输出以下帮助信息后结束：
+**如果用户传入 `-h` 或 `--help`**，不执行任何操作，直接输出以下帮助信息后结束。`-h` 与其它参数或说明文字
+同时出现时，一律**只出帮助、忽略其余参数**：本轮不猜附加要求，需要同时执行就把 `-h` 去掉分两次调用。
 
 ---
 
@@ -29,7 +30,7 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
   --project-id=N      项目 ID（必填，未指定直接报错；如 --project-id=1）
   --bug-id=N[,N…]     只处理指定 Bug（可选，正整数；逗号分隔可给多个，如 --bug-id=170,172，
                       仍严格逐条串行；指定后跳过队列，状态按各自 #bugId 回写）
-  -h, --help          显示本帮助
+  -h, --help          显示本帮助（出现即忽略其它参数，只出帮助）
 
 工作流程
   1. POST {host}/aibug/api/auth/login          登录，获取 token（请求体程序内组装，口令不写成 JSON 连写进命令行）
@@ -186,6 +187,7 @@ PY
 所有状态写入只认**当前 Bug 卡的 `#bugId`**，一次只改一条：
 
 - 唯一合法通道：`PUT {HOST}/aibug/api/bugs/{CURRENT_ID}/status`，`{CURRENT_ID}` 逐字等于本轮 Bug 卡的 `id`（队列模式取 `/bugs/next` 的返回值；指定模式取**当前正在处理的那个清单 ID**，多 ID 时逐条切换，绝不把上一条的 ID 接到下一条上）；回读同样用该 ID 的 `GET {HOST}/aibug/api/bugs/{CURRENT_ID}`
+- 全文示例里的 `{id}` 与 `{CURRENT_ID}` **同义**，都指当前 Bug 卡的 `id`，不存在第二个 ID 变量（参数解析里的清单变量统一叫 `BUG_IDS`，处理到哪一条，`{id}` 就是哪一条）
 - **禁止批量接口** `PUT {HOST}/aibug/api/bugs/batch/status`（body 用 `ids` 数组一次改多条，无法保证落点），任何情形都不使用
 - 禁止从对话历史、台账、上一条 Bug 的结论或子智能体返回文本里推断 ID：`{CURRENT_ID}` 只由主循环从取卡响应里确定，子智能体只回传结论，回写由主循环发起
 - 发起 PUT 前先回显一行 `#<id> → 即将回写 <状态>`；PUT 路径、PUT 响应里的 `id`、回读路径三处必须完全相同
@@ -198,7 +200,7 @@ PY
 
 1. **子智能体隔离**：3.3 的分析与修复默认委托给子智能体（Agent 工具）执行——子智能体拥有独立上下文，定位/阅读/修改代码的完整过程不进入主循环；主循环只接收结构化结果（常规 4 行，`AI_PARTIALLY_FIXED`/`FAILED` 追加 3 行回写字段）。
 2. **响应瘦身**：所有 API 响应只保留 `id`、`content`（≤500 字，超长截断）、`fileUrls`、`status`、`fixNote`、`error` 字段；禁止把完整 JSON 原文粘进对话。
-3. **台账式记录**：主循环只维护一行式台账 `#<id> → AI_FIXED/AI_PARTIALLY_FIXED/FAILED（AI_FIXED 中本轮零改动的已修复/重复修复追加标注 `AI_FIXED（已修复，无改动：<文件:行>）`、AI_PARTIALLY_FIXED 摘 fixNote 的"待修复"行、FAILED 摘 failReason 的"定位"行）`，不保留分析细节，也不在台账里重复整段回写字段。
+3. **台账式记录**：主循环只维护一行式台账 `#<id>（原状态 <X>）→ AI_FIXED/AI_PARTIALLY_FIXED/FAILED（AI_FIXED 中本轮零改动的已修复/重复修复追加标注 `AI_FIXED（已修复，无改动：<文件:行>）`、AI_PARTIALLY_FIXED 摘 fixNote 的"待修复"行、FAILED 摘 failReason 的"定位"行）`，异常终止写 `#<id>（原状态 <X>）→ 异常终止，卡在 IN_PROGRESS`。指定模式（`--bug-id`）里"原状态"与取卡时的 `fixNote`/`failReason` **原文**是用户回退的唯一依据，必须逐字保留（过长可另起一行按 `#<id>` 挂在台账下方，禁止只写"已摘要"）；其余情形不保留分析细节，也不在台账里重复整段回写字段。
 4. **定期压缩**：每处理完 5 个 Bug，或感知上下文占用约 60% 时，执行一次 `/compact`，并明确要求保留：连接参数与 token、台账表、当前未完成 Bug 的状态。
 
 **当前 Bug 信息权重优先**（当前需求/bug 信息高于历史上下文）：
@@ -219,7 +221,7 @@ curl -s "{HOST}/aibug/api/bugs/{CURRENT_ID}" \
 
 - 响应含 `error`、404 或 `id` 不等于该 `#bugId` → 单 ID 时**直接报错终止**（输出 `错误：#<id> 不存在或不可读`）；多 ID 时该条记台账 `#<id> → 不存在或不可读，已跳过`、**不改其状态**，继续清单下一条，全部走完列入汇总，不转队列模式；
 - `projectId` 与 `PROJECT_ID` 不一致 → 同上（单 ID 报错终止、多 ID 记异常跳过该条），防止跨项目误回写；
-- **不限当前状态**：`PENDING / IN_PROGRESS / AI_FIXED / AI_PARTIALLY_FIXED / FAILED / RESOLVED / CLOSED` 均可重新处理，本轮终态覆盖原状态；覆盖前先向用户明示 `#<id> <原状态> → <本轮判定状态>`，并把原状态与原有 `fixNote`/`failReason` **原文**记入台账（服务端在其它状态下会清空说明字段，落库后不可恢复）；
+- **不限当前状态**：`PENDING / IN_PROGRESS / AI_FIXED / AI_PARTIALLY_FIXED / FAILED / RESOLVED / CLOSED` 均可重新处理，本轮终态覆盖原状态；覆盖前先向用户明示 `#<id> <原状态> → <本轮判定状态>`，并把原状态与原有 `fixNote`/`failReason` **原文**记入台账（服务端在其它状态下会清空说明字段，落库后不可恢复）；3.2 的预标记一旦发生，本轮任何异常终止都会让该条停在 `IN_PROGRESS`、脱离 `/bugs/next` 队列，善后见 3.2 末与第四节"异常终止"清单；
 - 该条处理完（3.4 回读确认通过）后，清单里还有未处理 ID 就取下一个，否则进入完成输出，**不回到本步拉队列**。
 
 **队列模式（未传 `BUG_IDS`）**：按下述流程循环拉取 PENDING 清单。
@@ -270,6 +272,7 @@ curl -s "{HOST}/aibug/api/bugs/{id}" \
 ```
 
 - 响应中 `status` 必须为 `IN_PROGRESS`，否则重试一次；仍不一致则**停止处理该 Bug**，向用户报告不一致详情。
+- **预标记后的异常终止善后（必做）**：本轮无论因何中止（用户中断、3.3 判不出结果、token 重登后仍 401、上面这条回读两次不一致），该条都会停在 `IN_PROGRESS`——队列模式下它不再被 `/bugs/next` 下发，指定模式下它已盖掉 `CLOSED`/`RESOLVED`/`AI_FIXED` 等原状态。台账与第四节"异常终止"清单必须写明 `#<id> 卡在 IN_PROGRESS，原状态 <X>，fixNote/failReason 原文 <台账原文>`，提示用户到 aibug 界面改回；**不得**自行把它改回原状态或 `PENDING`（本 skill 只回写 `AI_FIXED` / `AI_PARTIALLY_FIXED` / `FAILED`），也不得臆造一条新的 PUT。
 
 ### 3.3 分析并修复 Bug（子智能体隔离）
 
@@ -438,6 +441,7 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
   - FAILED：N 个（逐条列出 #id 与 failReason 的 `现象` + `下一步` 行原文；无则 0）
   - 项目校验不通过：N 个（逐条列出 #id 与实际 projectId；无则 0）
   - 回写异常（ID 不一致，已终止）：N 个（逐条列出 #id 与期望状态；无则 0）
+  - 异常终止（卡在 IN_PROGRESS）：N 个（逐条列出 #id、取卡时的原状态、台账记下的 fixNote/failReason 原文；无则 0）
 
 （队列模式）队列已清空，无更多 PENDING Bug。
 （指定模式·单 ID）#<id> 处理完毕，本轮只回写该条状态，未触碰其它 Bug。
@@ -446,6 +450,7 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 
 - 汇总里引用说明字段时只摘对应标签行的原文，禁止把三行改写成一段叙述。
 - `AI_PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（服务端 `/bugs/next` 只下发 `PENDING`），本轮及后续 `/aibug` 都不会再自动处理其剩余问题；需在 aibug 界面把状态改回 `PENDING` 才会重新进入队列。
+- 卡在 `IN_PROGRESS` 的条目同样脱离队列，且指定模式下原状态已被 3.2 的预标记盖掉、说明字段已被服务端清空；只能按台账记录到 aibug 界面人工改回原状态或 `PENDING`，本 skill 不回写这两个状态。
 - `fixNote` 的 `待修复` 行与 `failReason` 的 `下一步` 行产生的事项，一律进入规范一的"人工待办"板块；行首 `@角色` 按该行点名的归属填写（如 `@DBA`、`@运维`、`@产品`），未点名归属时默认 `@研发`。
 
 ---
@@ -468,6 +473,7 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - 回传 `AI_FIXED` / `AI_PARTIALLY_FIXED` 得到 400 非法值，说明该环境尚未执行状态更名迁移（`FIXED` → `AI_FIXED` 见 `V9__rename_fixed_to_ai_fixed.sql`、`PARTIALLY_FIXED` → `AI_PARTIALLY_FIXED` 见 `V10__rename_partially_fixed.sql`，均在 `deploy-conf/db/migrations/aibug/`）：如实报告「该环境状态枚举未升级」并停止回写，**不得**改回 `FIXED` / `PARTIALLY_FIXED` 试探（已升级环境只认 `AI_` 系码，两代码不可混用）。
 - 读到响应里出现未订正的历史值 `FIXED` / `PARTIALLY_FIXED`（枚举已升级、数据未跟进的历史行）时，按原样记入台账并在汇总里点出，不猜测其含义、不试图批量订正——本 skill 只按 `#bugId` 单条回写。
 - `AI_PARTIALLY_FIXED` 只用于"确有代码改动且已改动部分验证通过"的情形：全量修好一律 `AI_FIXED`，禁止用它搪塞未验证的修复。本轮一点未改时**先按原现象复验再定状态**：复验确认现象已消失（已修复/重复修复）一律回传 `AI_FIXED`，只有复验仍能复现且确实无法修复、或改动后验证不通过，才 `FAILED`。
-- 每次修复前先标记 `IN_PROGRESS`，确保同一 Bug 不被并发处理；处理完毕必须按 3.4 回写终态并回读确认。
+- 每次修复前先标记 `IN_PROGRESS`（队列与指定模式都执行），确保同一 Bug 不被并发处理；处理完毕必须按 3.4 回写终态并回读确认。
+- **预标记的代价**：`IN_PROGRESS` 一旦写入，该条就脱离 `/bugs/next` 队列，指定模式下还会盖掉 `CLOSED`/`RESOLVED`/`AI_FIXED` 等原状态并连带清空 `fixNote`/`failReason`（服务端规则，落库不可恢复）。本轮异常终止时必须按台账记下的原状态与原文在汇总的"异常终止"清单里点明，交人工在 aibug 界面回退；本 skill 不回写 `PENDING`/`RESOLVED`/`CLOSED`，不得自行善后。
 - **必须串行执行**：本 skill 全程单实例、每条 Bug 委托子 agent 逐条串行处理，禁止并行（多实例、多个子 agent 同时处理多条 Bug、与 /aicase 或 /do-test 并发均不允许）；用户要求并行时应明确拒绝并说明该约束。
 - 本 skill 仅修改代码文件，不执行 `git commit`，由用户决定是否提交修复结果。
