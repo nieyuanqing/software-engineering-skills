@@ -27,22 +27,27 @@ description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。�
   --username=NAME     登录账号
   --password=PASS     登录密码
   --project-id=N      项目 ID（必填，未指定直接报错；如 --project-id=1）
-  --bug-id=N          只处理指定 Bug（可选，正整数；指定后跳过队列，状态按该 #bugId 回写）
+  --bug-id=N[,N…]     只处理指定 Bug（可选，正整数；逗号分隔可给多个，如 --bug-id=170,172，
+                      仍严格逐条串行；指定后跳过队列，状态按各自 #bugId 回写）
+  --verify-only       只定位 + 按原现象实测复验并给出判定，不改代码、不回写状态
+                      （必须与 --bug-id 同用）
   -h, --help          显示本帮助
 
 工作流程
   1. POST {host}/aibug/api/auth/login          登录，获取 token（请求体程序内组装，口令不写成 JSON 连写进命令行）
   2. GET  {host}/aibug/api/bugs/next           获取下一个 PENDING Bug
-     （传了 --bug-id=N 时改为 GET {host}/aibug/api/bugs/N 直接取该条，不限当前状态）
-  3. PUT  {host}/aibug/api/bugs/{id}/status    标记为 IN_PROGRESS
+     （传了 --bug-id 时改为按清单逐个 GET {host}/aibug/api/bugs/<id> 取卡，不限当前状态）
+  3. PUT  {host}/aibug/api/bugs/{id}/status    标记为 IN_PROGRESS（仅队列模式；指定模式跳过，
+     避免先把原状态与服务端说明字段抹掉——两者落库后不可恢复）
   4. 委托子智能体分析 Bug 并修复；每修复一个即刻验证（编译/构建/复测），
      验证通过才可标记 AI_FIXED / AI_PARTIALLY_FIXED，禁止最后统一验证；
      代码中已有修复、本轮无需改动（已修复/重复修复）时，按原现象复验通过即回传 AI_FIXED，不回传 FAILED
+     （--verify-only：跳过第 3 与第 5 步，子智能体只读定位 + 复验，给出判定即结束）
   5. PUT  {host}/aibug/api/bugs/{id}/status    标记为 AI_FIXED、AI_PARTIALLY_FIXED
      （必填 fixNote）或 FAILED（必填 failReason）；说明字段按固定标签分行填写，
      纯文本不写 markdown 标记（弹窗按 markdown 渲染，可选贴 http/站内链接）
      {id} 一律取当前 Bug 卡的 #bugId，只允许该单条接口，禁用 /bugs/batch/status
-  6. 循环回到第 2 步，直到无更多 PENDING Bug
+  6. 循环回到第 2 步，直到无更多 PENDING Bug（指定模式：清单里还有 ID 就取下一个，全部走完即结束）
 
 Bug 字段说明
   id          Bug 唯一 ID
@@ -58,6 +63,8 @@ Bug 字段说明
 
 示例
   /aibug --host=http://your-server:8082 --username=admin --password=secret --project-id=1
+  /aibug --host=... --username=... --password=... --project-id=1 --bug-id=170,172
+  /aibug --host=... --username=... --password=... --project-id=1 --bug-id=165 --verify-only
   /aibug -h
 ```
 
@@ -73,12 +80,17 @@ Bug 字段说明
 | `--username=NAME` | `USERNAME`（必填，无默认值） |
 | `--password=PASS` | `PASSWORD`（必填，无默认值） |
 | `--project-id=N` | `PROJECT_ID`（必填，无默认值） |
-| `--bug-id=N` | `BUG_ID`（可选，正整数；指定后**只处理该条 Bug**，跳过 `/bugs/next` 队列，状态按该 `#bugId` 回写） |
+| `--bug-id=N[,N…]` | `BUG_IDS`（可选，正整数，逗号分隔可给多个；指定后**只处理这些 Bug**，跳过 `/bugs/next` 队列，状态按各自 `#bugId` 逐条回写） |
+| `--verify-only` | `VERIFY_ONLY`（可选开关；只定位 + 复验并给出判定，不改代码、不回写，必须与 `--bug-id` 同用） |
 
 ### 1.2 参数校验与补齐
 
 - **`PROJECT_ID` 必须通过 `--project-id=N` 显式指定**：未指定时**直接报错终止**（输出 `错误：缺少 --project-id=N，必须指定项目 ID`），不交互询问、不继续执行。
-- **`BUG_ID` 可选，指定时必须是正整数**（如 `--bug-id=170`）：非法值（非数字、0、负数、带空格）直接报错终止（输出 `错误：--bug-id=N 必须为正整数`），不静默忽略、不退回队列模式。
+- **`BUG_IDS` 可选，逗号分隔的 ID 清单**（如 `--bug-id=170` 或 `--bug-id=170,172,185`）：每段都必须是正整数，
+  任一段非法（非数字、0、负数、带空格、空段、多余逗号）直接报错终止（输出 `错误：--bug-id 必须为正整数或逗号分隔的正整数列表`），
+  不静默忽略、不退回队列模式；清单去重后**按用户给定顺序**逐条串行处理，不重排、不按状态排序。
+- **`--verify-only` 只允许与 `--bug-id` 同用**：未给 `--bug-id` 时直接报错终止（输出 `错误：--verify-only 必须与 --bug-id 同用，本模式不回写状态、不能跑队列`），
+  不允许"扫一遍队列但一条都不回写"。
 - **`PASSWORD` 仍由 `--password=PASS` 传入**（不新增其它口令参数）：口令值只用于登录那一次请求，
   装配请求体的方式见第二节——**不得**以 `"password":"<值>"` 的连写形态出现在命令行。
 - 其余必填参数缺失时**一次性列出**，统一交互询问：
@@ -155,7 +167,7 @@ PY
 
 ## 三、修复循环
 
-以下步骤循环执行，直到无更多 PENDING Bug 为止。**指定模式（传了 `BUG_ID`）只执行一遍**：该条回读确认通过即结束整个流程。
+以下步骤循环执行，直到无更多 PENDING Bug 为止。**指定模式（传了 `BUG_IDS`）按清单逐条走一遍**：每个 `#bugId` 都完成 3.3 判定（非 `--verify-only` 还须 3.4 回读确认）后才取下一个，全部走完即结束整个流程，不回队列。
 
 ### 执行过程输出要求（必做）
 
@@ -173,6 +185,8 @@ PY
 - `[登录]` 行每轮开头记一次；失败时写 `→ <http>，<error>`，并追加一句 `传参自检：已做（本地改写已排除/未排除）`
   或 `传参自检：未做`——没做自检就不能只写"口令错误"。
 - 路径中 `{PROJECT_ID}`、`{id}` 替换为真实值；token 值与 Authorization 头一律不出现（只允许写 token 长度）。
+- `status=IN_PROGRESS` 的 `[回传状态]` + `[回读确认]` 两行**只在队列模式出现**；指定模式跳过 3.2，从 `[取 Bug]` 直接到终态回写那两行。
+- `--verify-only` 全程只有 `[取 Bug]` 一行 API 调用，末尾追加一行 `[判定] #<id> <原状态> → <本轮判定>（未回写，状态保持不变）`。
 - `fixNote` / `failReason` 是多行结构化字段，输出行里**只标注标签序列**（如 `fixNote=已修复/待修复/验证`），不在这里展开正文，正文由 3.4 的回读验证逐行比对。
 - 非 200 或响应含 `error` 时在同一行追加一句话原因，不重试转述响应体。
 - 同一轮内 `[取 Bug]`、`[回传状态]`、`[回读确认]` 三行的 `#<id>` 必须完全一致（都等于当前 Bug 卡的 `id`）；不一致立即停手，按"状态回写寻址约束"处理。
@@ -181,11 +195,11 @@ PY
 
 所有状态写入只认**当前 Bug 卡的 `#bugId`**，一次只改一条：
 
-- 唯一合法通道：`PUT {HOST}/aibug/api/bugs/{CURRENT_ID}/status`，`{CURRENT_ID}` 逐字等于本轮 Bug 卡的 `id`（队列模式取 `/bugs/next` 的返回值，指定模式取 `--bug-id`）；回读同样用该 ID 的 `GET {HOST}/aibug/api/bugs/{CURRENT_ID}`
+- 唯一合法通道：`PUT {HOST}/aibug/api/bugs/{CURRENT_ID}/status`，`{CURRENT_ID}` 逐字等于本轮 Bug 卡的 `id`（队列模式取 `/bugs/next` 的返回值；指定模式取**当前正在处理的那个清单 ID**，多 ID 时逐条切换，绝不把上一条的 ID 接到下一条上）；回读同样用该 ID 的 `GET {HOST}/aibug/api/bugs/{CURRENT_ID}`
 - **禁止批量接口** `PUT {HOST}/aibug/api/bugs/batch/status`（body 用 `ids` 数组一次改多条，无法保证落点），任何情形都不使用
 - 禁止从对话历史、台账、上一条 Bug 的结论或子智能体返回文本里推断 ID：`{CURRENT_ID}` 只由主循环从取卡响应里确定，子智能体只回传结论，回写由主循环发起
 - 发起 PUT 前先回显一行 `#<id> → 即将回写 <状态>`；PUT 路径、PUT 响应里的 `id`、回读路径三处必须完全相同
-- 出现任一不一致（回读 `id` ≠ 提交 `id`、读到的是其它 Bug、PUT 响应含 `error`）→ **立即终止本轮**（指定模式终止整个执行），记台账 `#<id> → 回写 ID 不一致，已终止`，列入完成汇总的"回写异常"清单；不带猜测重试、不改写任何其它 Bug 的状态
+- 出现任一不一致（回读 `id` ≠ 提交 `id`、读到的是其它 Bug、PUT 响应含 `error`）→ **立即终止本轮**；指定模式下（无论单 ID 还是清单里第几条）一律**停止整个执行**，剩余 ID 不再处理——回写落点异常属系统级故障，继续跑只会扩大误写面，记台账 `#<id> → 回写 ID 不一致，已终止`，列入完成汇总的"回写异常"清单；不带猜测重试、不改写任何其它 Bug 的状态
 - 重复报单（多条 Bug 指向同一问题点）时，逐条各自回写各自的 `#id`，不得只回写一条或把结论写到另一条上
 
 ### 上下文与权重控制（全程必做）
@@ -205,19 +219,22 @@ PY
 
 ### 3.1 获取下一个 Bug
 
-**指定模式（传了 `BUG_ID`）**：跳过本步的队列拉取，直接按该 `#bugId` 取卡，一次只处理这一条：
+**指定模式（传了 `BUG_IDS`）**：跳过本步的队列拉取，按清单顺序逐个 `#bugId` 取卡，一次只处理一条（当前这条走完才取下一条）：
 
 ```bash
-curl -s "{HOST}/aibug/api/bugs/{BUG_ID}" \
+# 对 BUG_IDS 里的每个 ID 各执行一次（记为 {CURRENT_ID}，严格串行）
+curl -s "{HOST}/aibug/api/bugs/{CURRENT_ID}" \
   -H "Authorization: Bearer <token>"
 ```
 
-- 响应含 `error`、404 或 `id` 不等于 `{BUG_ID}` → **直接报错终止**（输出 `错误：#<BUG_ID> 不存在或不可读`），不转队列模式、不改写其它 Bug；
-- `projectId` 与 `PROJECT_ID` 不一致 → **直接报错终止**（不改动该 Bug 状态），防止跨项目误回写；
-- **不限当前状态**：`PENDING / IN_PROGRESS / AI_FIXED / AI_PARTIALLY_FIXED / FAILED / RESOLVED / CLOSED` 均可重新处理，本轮终态覆盖原状态；覆盖前先向用户明示 `#<id> <原状态> → <本轮判定状态>`，并把原状态与原有 `fixNote`/`failReason` 摘要记入台账（服务端在 `AI_FIXED` 等状态下会清空说明字段，落库后不可恢复）；
-- 该条处理完（3.4 回读确认通过）即进入完成输出，**不回到本步取下一个 Bug**。
+- 响应含 `error`、404 或 `id` 不等于该 `#bugId` → 单 ID 时**直接报错终止**（输出 `错误：#<id> 不存在或不可读`）；多 ID 时该条记台账 `#<id> → 不存在或不可读，已跳过`、**不改其状态**，继续清单下一条，全部走完列入汇总，不转队列模式；
+- `projectId` 与 `PROJECT_ID` 不一致 → 同上（单 ID 报错终止、多 ID 记异常跳过该条），防止跨项目误回写；
+- **不限当前状态**：`PENDING / IN_PROGRESS / AI_FIXED / AI_PARTIALLY_FIXED / FAILED / RESOLVED / CLOSED` 均可重新处理，本轮终态覆盖原状态；覆盖前先向用户明示 `#<id> <原状态> → <本轮判定状态>`，并把原状态与原有 `fixNote`/`failReason` **原文**记入台账（服务端在其它状态下会清空说明字段，落库后不可恢复）；
+- **跳过 3.2**：指定模式不做 `IN_PROGRESS` 预标记，取卡后直接进 3.3。从取卡到 3.4 终态回写之间状态保持原值，本轮异常终止（用户中断、验证卡住、token 失效后仍失败）时**原状态与说明字段不受任何影响**——预标记只为防队列并发抢单，指定模式没人抢；
+- **`--verify-only`（只读复核）**：子智能体禁止 Edit/Write、主循环禁止发起任何 PUT，只做定位 + 按 `content` 原现象实测复验（编译/构建、接口 curl、相关测试），台账与汇总里状态一栏写 `未回写（保持 <原状态>）`；判定确实需要修时只输出该改什么，由用户再跑一次不带该开关的命令；
+- 该条处理完（非 `--verify-only` 须 3.4 回读确认通过）后，清单里还有未处理 ID 就取下一个，否则进入完成输出，**不回到本步拉队列**。
 
-**队列模式（未传 `BUG_ID`）**：按下述流程循环拉取 PENDING 清单。
+**队列模式（未传 `BUG_IDS`）**：按下述流程循环拉取 PENDING 清单。
 
 ```bash
 curl -s "{HOST}/aibug/api/bugs/next?projectId={PROJECT_ID}" \
@@ -246,9 +263,9 @@ curl -s "{HOST}/aibug/api/bugs/next?projectId={PROJECT_ID}" \
 - 不一致 → **不更新该 Bug 状态**，记台账 `#<id> → 项目校验不通过（projectId=<实际值> ≠ <PROJECT_ID>）`，跳过该 Bug，回到本步取下一个；
 - 若再次取回同一 Bug ID（服务端过滤异常），**立即终止循环**并向用户告警，该记录列入完成汇总的"项目校验不通过"清单，防止死循环。
 
-### 3.2 标记为 IN_PROGRESS
+### 3.2 标记为 IN_PROGRESS（仅队列模式）
 
-获取到 Bug 后，立即更新状态，防止被重复领取：
+**队列模式**获取到 Bug 后立即更新状态，防止被重复领取；**指定模式（传了 `BUG_IDS`）跳过本步**——预标记会先把原状态与服务端说明字段抹掉（落库不可恢复），而指定模式不存在并发抢单，见 3.1：
 
 ```bash
 curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
@@ -275,6 +292,7 @@ curl -s "{HOST}/aibug/api/bugs/{id}" \
   `/bugs/{id}/status` 等任何 aibug API，不得自行取卡、改状态或回写说明字段；只做代码定位 / 修改 / 验证，
   按 3.3 格式回传结构化结论。取卡与回写只由主循环发起——子智能体若自己拿内联口令去 curl，会撞上第二节那个
   脱敏改写坑，并把"登录失败"的错误结论带回主循环。
+- **`--verify-only` 的额外约束**（写进 prompt）：只读复核，禁止修改任何文件、禁止执行会改动工程或数据的命令，只允许读代码与实测复验；回传 `结果 / 修改文件: 无（只读复核）/ 验证 / 说明` 四行，不出 `fixNote`/`failReason` 正文
 - 工程根路径，以及约束：最小化修复、只改代码不执行 git commit、**修复后必须验证**、**按下方三态判定标准给出结果**、**`AI_PARTIALLY_FIXED`/`FAILED` 必须按 3.4 的三行标签结构回写说明字段，且字段值是纯文本（这两个字段在 aibug 弹窗按 markdown 渲染，除可选的 http/站内链接外不得带任何 markdown 标记）**、无法修复时明确说明原因
 
 **串行约束（必做）**：每条 Bug 单独委托一个子智能体，同一时刻最多只有一个子智能体在运行；当前子智能体返回结果并记入台账后，才可为下一条 Bug 启动新的子智能体，禁止同时派出多个子智能体并行修复。
@@ -416,7 +434,7 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 
 ### 3.5 循环至下一个 Bug
 
-完成一个 Bug 的处理后，回到 **3.1**，继续获取下一个 PENDING Bug。**指定模式（传了 `BUG_ID`）不回队列**：该条回读确认通过即结束，直接进入第四节。
+完成一个 Bug 的处理后，回到 **3.1**，继续获取下一个 PENDING Bug。**指定模式（传了 `BUG_IDS`）不回队列**：清单里还有未处理的 `#bugId` 就按顺序取下一个（各自回写各自的 `#id`），全部处理完（`--verify-only` 为全部判定完）直接进入第四节。
 
 ---
 
@@ -435,7 +453,9 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
   - 回写异常（ID 不一致，已终止）：N 个（逐条列出 #id 与期望状态；无则 0）
 
 （队列模式）队列已清空，无更多 PENDING Bug。
-（指定模式）#<BUG_ID> 处理完毕，本轮只回写该条状态，未触碰其它 Bug。
+（指定模式·单 ID）#<id> 处理完毕，本轮只回写该条状态，未触碰其它 Bug。
+（指定模式·多 ID）共 N 个 ID：逐条列出 `#<id> <原状态> → <本轮终态>`；被跳过的（不存在 / 项目校验不通过）逐条列出原因。
+（--verify-only）逐条列出 `#<id> <原状态> → <本轮判定>` 与 `验证` 行原文；本轮未发起任何状态回写，也未改动任何代码文件。
 ```
 
 - 汇总里引用说明字段时只摘对应标签行的原文，禁止把三行改写成一段叙述。
@@ -448,7 +468,9 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 
 - 所有参数（HOST、USERNAME、PASSWORD、PROJECT_ID）均无默认值，必须由用户在每次调用时提供。
 - `PROJECT_ID` 必须通过命令行 `--project-id=N` 传入；缺失时直接报错终止，不做交互询问兜底。
-- `--bug-id=N` 为可选的指定模式：跳过 `/bugs/next`，只处理并按该 `#bugId` 回写这一条，不限原状态但会覆盖原状态；处理完即结束，不回队列，也不触碰任何其它 Bug。
+- `--bug-id` 为可选的指定模式：跳过 `/bugs/next`，只处理清单里这些 `#bugId` 并各自回写，不限原状态但会覆盖原状态；处理完即结束，不回队列，也不触碰任何其它 Bug。逗号分隔可给多个（如 `--bug-id=170,172`），去重后按给定顺序逐条串行；取卡失败或项目校验不通过时，单 ID 报错终止、多 ID 记异常跳过该条。
+- **指定模式不做 `IN_PROGRESS` 预标记**（跳过 3.2）：原状态与 `fixNote`/`failReason` 只在 3.4 回写终态那一次被覆盖，取卡时先把两者原文记进台账；中途异常终止则该条状态保持原值。
+- `--verify-only`（只读复核）：必须与 `--bug-id` 同用，只定位 + 按原现象实测复验并给出判定，**不改代码、不 PUT 任何状态**，用于确认 `CLOSED`/`RESOLVED`/`AI_FIXED` 这类已闭环条目的真实状态；判定要修时由用户再跑一次不带该开关的命令。
 - **状态回写只允许按 `#bugId` 的单条接口** `PUT /aibug/api/bugs/{id}/status`；后端另有 `PUT /aibug/api/bugs/batch/status`（`ids` 数组批量改多条），本 skill 一律禁用，详见"状态回写寻址约束"。
 - 口令仍由 `--password=PASS` 传入，只用于登录那一次请求，不写入任何文件、不在日志中明文输出；但值必须先落 shell
   变量再由程序 `json.dumps` 组装请求体，命令行里**不得**出现 `"password":"<值>"` 连写形态（会被凭据脱敏改写成
@@ -462,6 +484,6 @@ curl -s -X PUT "{HOST}/aibug/api/bugs/{id}/status" \
 - 回传 `AI_FIXED` / `AI_PARTIALLY_FIXED` 得到 400 非法值，说明该环境尚未执行状态更名迁移（`FIXED` → `AI_FIXED` 见 `V9__rename_fixed_to_ai_fixed.sql`、`PARTIALLY_FIXED` → `AI_PARTIALLY_FIXED` 见 `V10__rename_partially_fixed.sql`，均在 `deploy-conf/db/migrations/aibug/`）：如实报告「该环境状态枚举未升级」并停止回写，**不得**改回 `FIXED` / `PARTIALLY_FIXED` 试探（已升级环境只认 `AI_` 系码，两代码不可混用）。
 - 读到响应里出现未订正的历史值 `FIXED` / `PARTIALLY_FIXED`（枚举已升级、数据未跟进的历史行）时，按原样记入台账并在汇总里点出，不猜测其含义、不试图批量订正——本 skill 只按 `#bugId` 单条回写。
 - `AI_PARTIALLY_FIXED` 只用于"确有代码改动且已改动部分验证通过"的情形：全量修好一律 `AI_FIXED`，禁止用它搪塞未验证的修复。本轮一点未改时**先按原现象复验再定状态**：复验确认现象已消失（已修复/重复修复）一律回传 `AI_FIXED`，只有复验仍能复现且确实无法修复、或改动后验证不通过，才 `FAILED`。
-- 每次修复前先标记 `IN_PROGRESS`，确保同一 Bug 不被并发处理。
+- **队列模式**每次修复前先标记 `IN_PROGRESS`，确保同一 Bug 不被并发处理；**指定模式跳过该步**（见上两条），终态一次性回写。
 - **必须串行执行**：本 skill 全程单实例、每条 Bug 委托子 agent 逐条串行处理，禁止并行（多实例、多个子 agent 同时处理多条 Bug、与 /aicase 或 /do-test 并发均不允许）；用户要求并行时应明确拒绝并说明该约束。
 - 本 skill 仅修改代码文件，不执行 `git commit`，由用户决定是否提交修复结果。
