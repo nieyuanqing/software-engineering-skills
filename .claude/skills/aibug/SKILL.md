@@ -1,6 +1,6 @@
 ---
 name: aibug
-description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。依次执行：登录获取 token → 获取下一个 Bug → 分析代码并修复 → 更新状态（AI_FIXED/AI_PARTIALLY_FIXED/FAILED），直到无更多待处理 Bug；可用 --bug-id=N 只处理并按该 #bugId 回写指定单条。必须配合 aibug 系统使用。支持 /aibug -h 查看帮助。
+description: 连接 aibug 系统，循环自动修复 PENDING 状态的 Bug。依次执行：登录获取 token → 获取下一个 Bug → 分析代码并修复 → 更新状态（AI_FIXED/AI_PARTIALLY_FIXED/FAILED），直到无更多待处理 Bug；可用 --bug-id=N[,N…] 只处理指定条目（任意原状态、跳过 IN_PROGRESS 预标记），加 --verify-only 则只复验不回写。必须配合 aibug 系统使用。支持 /aibug -h 查看帮助。
 ---
 
 # aibug
