@@ -403,8 +403,6 @@ software-engineering-skills/
   --project-id=1                         # 全参数指定，直接开始
 /aibug --host=... --username=... --password=... \
   --project-id=1 --bug-id=170,172        # 只处理这两条，逐条串行、各自回写
-/aibug --host=... --username=... --password=... \
-  --project-id=1 --bug-id=165 --verify-only   # 只复核 #165 到底修没修好，不改代码不回写
 /aibug                                   # 交互式，逐一询问参数
 /aibug -h                                # 查看帮助
 ```
@@ -425,12 +423,11 @@ software-engineering-skills/
 | 参数 | 说明 |
 |---|---|
 | `--bug-id` | 指定模式：跳过 `/bugs/next` 队列，只处理这些条并各自回写状态（正整数，可逗号分隔多个如 `170,172`，任一段非法直接报错；去重后按给定顺序逐条串行；不限原状态，但会覆盖原状态，**跳过 `IN_PROGRESS` 预标记**，全部处理完即结束） |
-| `--verify-only` | 只读复核：只定位 + 按 `content` 原现象实测复验并给出判定，不改代码、不 PUT 任何状态（必须与 `--bug-id` 同用，否则直接报错终止，不允许跑队列却一条都不回写） |
 
 **工作流程**
 
 1. `POST {host}/aibug/api/auth/login` — 登录获取 token（**先登录拿到 token，才允许访问其它接口**；失败按状态码分型：`400` 是请求构造问题可自查后重试一次，`401 用户名或密码错误` 须先过传参自检确认不是本地改写，才按凭据问题立即停止向用户索取口令，不猜不刷，对外结论写明"本地传参改写已排除/未排除"；服务端无失败锁定）
-2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug；传了 `--bug-id` 时跳过队列，按清单顺序逐个 `GET {host}/aibug/api/bugs/<id>` 取卡（不限当前状态，本轮终态覆盖原状态），全部处理完即结束、不回队列；`--verify-only` 时只取卡 + 复验，不进入回写
+2. `GET {host}/aibug/api/bugs/next?projectId=N` — 获取下一个 PENDING Bug；传了 `--bug-id` 时跳过队列，按清单顺序逐个 `GET {host}/aibug/api/bugs/<id>` 取卡（不限当前状态，本轮终态覆盖原状态），全部处理完即结束、不回队列
 3. 项目校验：响应 `projectId` 与 `--project-id` 不符则跳过该 Bug（不改状态），校验不通过记录列入最终汇总；**指定模式下单 ID 不符直接报错终止、多 ID 记异常跳过该条继续**，防止跨项目误回写
 4. 标记为 `IN_PROGRESS`，防止重复领取（**仅队列模式**；指定模式跳过，取卡到终态回写之间保持原状态，避免原状态与 `fixNote`/`failReason` 被提前清空且不可恢复）
 5. 分析 Bug 描述（`content`）及附件（`fileUrls`），定位并修复代码，逐条核对 Bug 中的问题点
@@ -439,7 +436,7 @@ software-engineering-skills/
    `AI_PARTIALLY_FIXED`；该改而未改或验证不通过 → `FAILED`。**已修复/重复修复**（代码中已有覆盖该问题点的修复、
    本轮零改动，含上一轮回传失败被重新领取、同一问题重复报单）→ 按 `content` 原现象实测复验，复验确认现象已消失
    即按该 Bug 的 `#id` 回传 `AI_FIXED`，**不得**标 `FAILED` 或为留痕改成 `AI_PARTIALLY_FIXED`（`AI_FIXED` 不保存说明字段，
-   判据留在台账与汇总）；复验仍能复现或无从验证才回到 `FAILED` 判定。`--verify-only` 时不落任何终态，只输出判定与 `验证` 行。说明字段一律结构化、按固定标签分行填写（值内单个 `\n`
+   判据留在台账与汇总）；复验仍能复现或无从验证才回到 `FAILED` 判定。说明字段一律结构化、按固定标签分行填写（值内单个 `\n`
    即断行，禁止揉成一段文字、禁止空行）：`fixNote` = `已修复 / 待修复 / 验证`，`failReason` = `现象 / 定位 /
    下一步`，单行 ≤60 字符、整体 ≤200 字符。这两个字段在 aibug 查看弹窗按 **markdown 渲染**，字段值必须是纯文本：不写粗体/行内
    代码/表格/引用/成对 `*` 或 `_`/删除线标记，行首不用 `#`+空格与 `-`、`+`、`*`、`数字.`，不写代码块围栏
