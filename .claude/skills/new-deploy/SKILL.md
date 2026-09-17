@@ -13,7 +13,7 @@ description: 为 Java/Spring Boot 工程生成 scripts/deploy.sh 和 scripts/app
 
 ## 零、参数处理
 
-**如果用户传入 `-h` 或 `--help`**，不执行任何文件操作，直接把下面的帮助信息**原样输出在本次回复正文里**后结束（斜杠命令把 SKILL.md 注入我的上下文不等于已展示给用户，正文里只回一句"已输出"就是没输出）：
+**如果用户传入 `-h` 或 `--help`**，不执行任何文件操作，直接把下面的帮助信息**原样输出在本次回复正文里**后结束（斜杠命令把 SKILL.md 注入我的上下文不等于已展示给用户，正文里只回一句"已输出"就是没输出）。`-h` 与其它参数或说明文字同时出现时，一律**只出帮助、忽略其余参数**：本轮不猜附加要求，需要同时执行就把 `-h` 去掉分两次调用：
 
 ---
 
@@ -30,7 +30,7 @@ description: 为 Java/Spring Boot 工程生成 scripts/deploy.sh 和 scripts/app
   --prod-domain=DOMAIN    prod 环境域名（如 --prod-domain=svc.example.com）
   --has-web=true|false    是否有前端静态资源，影响 deploy.sh 默认 target（默认 false）
   --has-android=true|false  是否有 Android 工程（src/android/），影响 usage 说明（默认 false）
-  -h, --help              显示本帮助
+  -h, --help              显示本帮助（出现即忽略其它参数，只出帮助）
 
 生成文件
   scripts/deploy.sh       部署脚本（Maven 构建、supervisord 管理、健康检查、远程部署、nginx 同步）

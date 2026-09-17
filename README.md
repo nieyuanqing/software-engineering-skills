@@ -552,6 +552,7 @@ software-engineering-skills/
 | `--task` | 只执行指定单项任务（api / cases），可多次传入；不传默认全部执行 |
 | `--case` | 只执行指定场景用例（文件名或场景名），可多次传入；隐含 --task=cases |
 | `--bucket` | 透传给 /api-test 的桶并发大小（整数 1-4）；**/do-test 默认按 `4` 调用**，显式传入时以用户值为准 |
+| `--base-url` | 透传给 /api-test 的后端 API 基础地址；不传则由 /api-test 自动探测 |
 | `--no-fix` | 只检查并输出报告，不修改代码 |
 
 **工作流程**
