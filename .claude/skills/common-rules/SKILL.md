@@ -103,8 +103,8 @@ description: 通用行为规范，适用于所有任务：每次任务完成后�
 
 规范六：dev / test / prod 三套配置文件自动对齐
   三类按环境成对维护的配置文件必须保持配置项集合对齐：
-    - env：deploy-conf/env.dev|test|prod、src/backend/<服务名>/.env|.env.test|.env.prod
-    - nginx：deploy-conf/nginx/vhosts/<服务名>.dev|test|prod.conf
+    - env：src/backend/<服务名>/.env|.env.test|.env.prod
+    - nginx：deploy-conf/nginx/<服务名>.dev|test|prod.conf（站点配置与主机级 nginx.conf 同目录）
     - 应用配置：src/main/resources/application-dev|-test|-prod.yml
   要求：
     - 新增 / 删除 / 更名配置项：三套环境文件同步变更，禁止只改其中一套
@@ -379,8 +379,8 @@ docs: 更新 README，补充 deploy.sh 能力说明
 
 | 类别 | 文件 |
 |---|---|
-| env | `deploy-conf/env.dev` / `env.test` / `env.prod`，`src/backend/<服务名>/.env` / `.env.test` / `.env.prod` |
-| nginx | `deploy-conf/nginx/vhosts/<服务名>.dev.conf` / `.test.conf` / `.prod.conf` |
+| env | `src/backend/<服务名>/.env` / `.env.test` / `.env.prod` |
+| nginx | `deploy-conf/nginx/<服务名>.dev.conf` / `.test.conf` / `.prod.conf` |
 | 应用配置 | `src/backend/<服务名>/src/main/resources/application-dev.yml` / `-test.yml` / `-prod.yml` |
 
 **强制要求**：

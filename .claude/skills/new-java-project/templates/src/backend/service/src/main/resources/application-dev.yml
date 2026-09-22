@@ -1,0 +1,27 @@
+# dev（本地开发）：连本机 PostgreSQL，开 JPA SQL 日志方便对着代码看查询
+spring:
+  datasource:
+    # 按 host/port/name 拼装而非整串 DB_URL：三套环境只差 DB_PASSWORD，
+    # 键集对齐时更容易比对，也不会出现某一环境漏填整条 URL。
+    # stringtype=unspecified 让 JDBC 把字符串参数交给 PostgreSQL 推断类型，
+    # 否则枚举/JSONB 列上会出现 "column is of type jsonb but expression is of type character varying"。
+    url: jdbc:postgresql://${DB_HOST:127.0.0.1}:${DB_PORT:<DB_PORT>}/${DB_NAME:<DB_NAME>}?stringtype=unspecified
+    username: ${DB_USERNAME:<DB_NAME>}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    root: INFO
+    # <BASE_PACKAGE> 换成本工程实际包名（如 com.example.demo）
+    <BASE_PACKAGE>: DEBUG

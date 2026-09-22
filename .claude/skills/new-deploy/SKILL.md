@@ -39,19 +39,28 @@ description: 为 Java/Spring Boot 工程生成 scripts/deploy.sh 和 scripts/app
 deploy.sh 主要能力
   目标: -t/--target all|backend|web|ssl|android|db（默认 all；--has-web=false 时默认 backend）
         支持逗号分隔多值（如 -t backend,web），按书写顺序叠加
-  服务: -s/--services NAME[,NAME...] 依次部署多个服务（每个对应 src/backend/<name>，
-        独立服务目录/日志/supervisor 进程；单值等价切换服务名）
+  服务: -s/--services NAME[,NAME...] 从脚本顶部 SERVICES 表里选中本次要部署的服务（可逗号多值），
+        每个服务对应 src/backend/<name>，独立服务目录/日志/supervisor 进程/数据库；
+        只给 -s 不给 -t 时视为只部后端（不部 Web）。新增服务在脚本顶部四张表各追加一条
   环境: -e/--env dev|test|prod（默认 dev）
   远程: -r/--remote USER@HOST（本地 Maven 构建，rsync 上传 JAR，SSH 远程重启）
   ssl:  --target ssl --env test|prod 安装 nginx（apt）+ 主配置 + 站点配置
-  db:   --target db --remote 或 --db（叠加）：pg_dump 本地库 → rsync → 远程 drop+create+restore
-        凭据从 src/backend/<SERVICE_NAME>/.env 读取（DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD）
-        DB_NAME 默认等于 <SERVICE_NAME>，可通过环境变量 DB_NAME=xxx 覆盖
-  健康检查: http://127.0.0.1:<APP_PORT>/api/<SERVICE_NAME>/health，最长等待 420s
+  db:   --target db --remote 或 --db（叠加）：pg_dump 本地 dev 库 → rsync → 远程 drop+create+restore
+        （破坏性，默认需输入 yes，-y 跳过）；源库凭据取第一个选中服务的 src/backend/<服务>/.env
+        （DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD），同步范围 = 选中服务在 SERVICE_DBS 表里的库
+  健康检查: http://127.0.0.1:<服务端口>/api/<服务名>/health，每 5s 一轮、最长等待 420s
+        （SERVICE_READY_TIMEOUT 可覆盖）；startsecs=10 只防立即崩溃，就绪与否由健康检查判定
+  JAR 版本化: 落盘 <服务>-<版本>.jar + 稳定软链 <服务>.jar，各服务版本按自己 pom 读取，
+        回滚只需把软链指回旧版本；JAR 定位兼容 <服务>/target 与多模块 <服务>/*/target
+  多前端: WEB_APPS + WEB_APP_SOURCE/DEPLOY/BASE_PATH/PROJECT_ID 四张表，构建时用 NEXT_BASE_PATH
+        传路由前缀（须与 nginx location 一致），并按 --env 覆盖 runtime-config.<env>.js
   supervisord 配置: 部署时 inline 生成，不依赖静态 ini 文件
-  env 文件: 按环境选择 .env / .env.test / .env.prod（来自 src/backend/<SERVICE_NAME>/）
+  env 文件: 按环境选择 .env / .env.test / .env.prod（来自 src/backend/<SERVICE_NAME>/），
+        部署前比对 .env 与目标环境文件的键集，缺键打警告（缺键=该环境静默缺配置）
+  路径可覆盖: APP_ROOT / LOG_ROOT / SUPERVISOR_CONF / SUPERVISOR_CONF_DIR /
+        NGINX_CONF_DIR / NGINX_SSL_DIR / WEB_DEPLOY_PATH / PUBLIC_IP（默认值见脚本顶部）
   构建日志: mvn/gradle/npm 过程日志不在终端显示，落盘 ./runtime/deploy-*-<时间戳>.log（失败时打印末尾 120 行）
-  日志标签: 涉及主机/数据库的日志统一带 "<SERVICE_NAME>（主机|数据库，本机|远程）" 标签，便于定位
+  日志标签: 涉及具体服务/库/主机的日志一律点名（"上传 JAR: pay → root@host:..."），多服务部署时可区分是谁
   日志格式: [YYYY-MM-DD HH:MM:SS] [deploy.sh] ... + Phase N/M 阶段编号
   状态输出: [STATUS] OK / [STATUS] ERROR 机器可读行
 
@@ -223,8 +232,8 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
    ss -tln | grep -E ':(<NGINX_PORT>|<APP_PORT>)\b'
 
 2. 配置 dev 环境变量（deploy.sh 从 src/backend/<SERVICE_NAME>/.env 读取）：
-   cp deploy-conf/env.dev src/backend/<SERVICE_NAME>/.env
-   vim src/backend/<SERVICE_NAME>/.env
+   vim src/backend/<SERVICE_NAME>/.env      # 三份 env 由 /new-java-project 生成，此处填真值
+   # 只要本 skill 单独使用（不跑 /new-java-project），需自备该文件，键集与 .env.test/.env.prod 对齐
 
 3. 执行部署：
    bash scripts/deploy.sh

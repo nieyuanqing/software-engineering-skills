@@ -4,7 +4,7 @@
 > 主机上可能同时运行着多个不相关项目，共用同一套 supervisord、nginx、目录结构。
 > 任何要在这台主机上部署新服务的人，都应该先读这份文档，而不是各自摸索一套部署方式。
 > 项目专属的部署细节（端口分配、数据库名、部署脚本用法）见各项目自己的 `specs/deployment.md`。
-> 版本：v1.0 ｜ 日期：2026-08-05
+> 版本：v1.1 ｜ 日期：2026-09-22
 
 ---
 
@@ -18,6 +18,7 @@
 6. [服务启动健康检查（强制）](#六服务启动健康检查强制)
 7. [回滚与停止模板](#七回滚与停止模板)
 8. [故障案例：启动 supervisord 引发的连带故障](#八故障案例启动-supervisord-引发的连带故障)
+9. [配置与日志安全约定（强制）](#九配置与日志安全约定强制)
 
 ---
 
@@ -29,10 +30,15 @@
 |---|---|
 | 应用部署目录（jar + `.env`） | `/opt/soft/apps/<service-name>/` |
 | 应用日志 | `/data/logs/apps/<service-name>/` |
-| supervisord 程序配置 | `/etc/supervisor/conf.d/<service-name>.ini` |
-| nginx vhost 配置 | `/opt/soft/nginx/conf/vhosts/<service-name>.conf` |
+| supervisord 程序配置 | `/etc/supervisor/conf.d/<service-name>.conf` |
+| nginx 站点配置 | `/etc/nginx/conf.d/<service-name>.conf` |
+| nginx 访问日志 | `/data/logs/nginx/<service-name>-access.log` |
+| SSL 证书 | `/etc/nginx/ssl/<域名>.pem` + `<域名>.key` |
 
 `<service-name>` 必须在该项目内部保持统一（Maven `artifactId`、`spring.application.name`、supervisord `[program:x]` 名称、数据库名/用户名全部同名）——避免出现"代码里叫 A，部署目录叫 B"的错位，这类错位是排查问题时最容易踩的坑。
+
+**证书按域名命名，不按服务名命名**。一台机器上可能同时挂多个域名（test 与 prod 迁移、
+多站点共用），按服务名命名会互相覆盖，且 `deploy.sh` 判断"该环境有没有证书"时也无从对齐。
 
 ---
 
@@ -52,15 +58,18 @@
 
 以下规则源自实际部署中踩过的坑（见第八节故障案例），**任何项目在这台主机上执行涉及 supervisord 或 nginx 的操作前都要过一遍**：
 
-1. **启动/重启 supervisord daemon 前，必须先看一遍 `/etc/supervisor/conf.d/*.ini` 里的每个程序对应的进程是否已经在跑**（`ps aux` 按 jar 路径核对）。如果某个 `.ini` 里的程序其实是靠别的方式（手动、别的启动脚本）已经在运行的"影子进程"，supervisord 一启动就会尝试再启动一份，轻则端口冲突启动失败，重则（`autorestart=true`）陷入反复重启的 crash loop，白白消耗资源、刷爆日志
+1. **启动/重启 supervisord daemon 前，必须先看一遍 `/etc/supervisor/conf.d/*.conf`（历史上也有 `*.ini`）里的每个程序对应的进程是否已经在跑**（`ps aux` 按 jar 路径核对）。如果某个配置里的程序其实是靠别的方式（手动、别的启动脚本）已经在运行的"影子进程"，supervisord 一启动就会尝试再启动一份，轻则端口冲突启动失败，重则（`autorestart=true`）陷入反复重启的 crash loop，白白消耗资源、刷爆日志
 
 2. **`nginx -s reload` 影响的是全局 nginx 进程**，会重新加载所有项目的 vhost 配置。虽然不会中断现有连接，但如果别的项目的配置本身有问题，这次 reload 可能把那个问题暴露出来。操作前用 `nginx -t` 先过一遍语法检查，但语法对不代表所有项目的行为都不受影响
 
 3. **禁止在没有明确授权的情况下 `stop`/`remove`/修改不属于本项目的 supervisord 程序或 nginx vhost**。发现别的项目的程序状态异常（`EXITED`/`FATAL`/crash loop）时，**先报告现象、说明是否是本次操作引发的，再询问如何处理**，不要自己判断"看起来没事"就动手清理
 
-4. **只删除/修改 `/etc/supervisor/conf.d/` 下与本项目相关的 `.ini` 文件**，即使看到其他明显失效的配置（如指向已被别的进程占用同一端口的重复配置），也只在该配置所属项目的人明确要求时才处理，处理前确认清楚该配置对应的服务是否有其他形式的存活实例，避免误删还在被使用的配置
+4. **只删除/修改 `/etc/supervisor/conf.d/` 下与本项目相关的 `.conf` 文件**，即使看到其他明显失效的配置（如指向已被别的进程占用同一端口的重复配置），也只在该配置所属项目的人明确要求时才处理，处理前确认清楚该配置对应的服务是否有其他形式的存活实例，避免误删还在被使用的配置
 
-5. **"完整执行"和"只做自己那部分"要分开设计**——涉及共享 nginx/supervisord 的部署脚本应该提供类似 `--no-nginx` 的选项，让"先只部署应用本身、暂不碰共享 nginx"成为一个明确、独立的选项，而不是必须一把全上
+5. **"完整执行"和"只做自己那部分"要分开设计**——部署脚本必须能只动自己那一份配置，不要一把全上。
+   `/new-java-project`、`/new-deploy` 生成的 `deploy.sh` 的落地方式：常规后端部署**只同步本站点**
+   的 `/etc/nginx/conf.d/<service-name>.conf`（拷文件 → `nginx -t` 通过才 reload），nginx 未安装时
+   跳过并记日志；安装 nginx 本体与主配置是独立的 `--target ssl` 动作，不会跟着常规部署发生
 
 ---
 
@@ -73,35 +82,45 @@
 3. 日志头格式统一为：
 
    ```
-   [YYYY-MM-DD HH:MM:SS] ===== <模块名> =====
+   [YYYY-MM-DD HH:MM:SS] [<脚本名>] <消息>
+   ```
+
+   阶段（模块）头额外带序号，便于对着时间线判断"卡在第几步"：
+
+   ```
+   [YYYY-MM-DD HH:MM:SS] [<脚本名>] ========== Phase <N>/<总步数>: <模块名> ==========
    ```
 
 4. 模块内部的具体命令输出、警告信息紧跟在日志头下面，不额外加格式
+5. 脚本结尾输出一行机器可读状态 `[STATUS] OK - <结论>` 或 `[STATUS] ERROR - <原因>`，
+   供 CI 与 agent 直接判定结果，不需要去猜最后一段人话
 
 **示例**：
 
 ```
-[2026-07-28 18:02:15] ===== 1/5 构建后端 jar =====
-[INFO] BUILD SUCCESS
+[2026-09-22 18:02:15] [deploy.sh] ========== Phase 1/5: Maven 构建 ==========
+[2026-09-22 18:02:41] [deploy.sh] ========== Phase 2/5: 部署 JAR → /opt/soft/apps/myservice ==========
+[2026-09-22 18:02:41] [deploy.sh] 已部署 JAR: myservice -> /opt/soft/apps/myservice/myservice-1.4.2.jar
 
-[2026-07-28 18:02:41] ===== 2/5 部署 jar 到目标目录 =====
-构建产物: /opt/soft/apps/myservice/myservice.jar
-
-[2026-07-28 18:02:42] ===== 3/5 写入 supervisord 配置 =====
+[2026-09-22 18:03:12] [deploy.sh] 部署完成
+[STATUS] OK - 微服务已部署：myservice
 ```
 
-各项目部署脚本里做日志打印的辅助函数（通常叫 `log()` 或 `step()`）都应该实现这个格式，不要各自发明一套。由 `/new-deploy`、`/new-java-project` 生成的 deploy.sh 里的 `step()/info()/warn()` 函数是这个约定的参照实现，可以直接抄。
+各项目部署脚本里做日志打印的辅助函数（`log()` / `log_step()` / `fail()`）都应该实现这个格式，不要各自发明一套。由 `/new-deploy`、`/new-java-project` 生成的 `deploy.sh` 里的这三个函数是这个约定的参照实现，可以直接抄。
 
 ---
 
 ## 五、部署前检查清单模板
 
 ```bash
-supervisorctl status                                  # supervisord daemon 是否在跑，别的程序状态是否正常
-ls /opt/soft/apps/<service-name>/.env                  # .env 是否已准备好
-ss -tln | grep -E ':(<port1>|<port2>)\b'               # 目标端口是否空闲（应为空输出）
-/opt/soft/nginx/sbin/nginx -t                          # nginx 配置当前是否健康（部署前的基线状态）
+supervisorctl status                                   # supervisord daemon 是否在跑，别的程序状态是否正常
+ls /opt/soft/apps/<service-name>/.env                   # .env 是否已准备好
+ss -tln | grep -E ':(<port1>|<port2>)\b'                # 目标端口是否空闲（应为空输出）
+nginx -t                                               # nginx 配置当前是否健康（部署前的基线状态）
 ```
+
+`nginx -t` 是部署前的**基线**：先确认现在是通过的，出问题才知道是不是自己引入的。
+源码安装的 nginx（`/opt/soft/nginx/sbin/nginx`）换成对应绝对路径即可。
 
 四项全部确认后再执行具体项目的部署脚本。
 
@@ -113,17 +132,19 @@ ss -tln | grep -E ':(<port1>|<port2>)\b'               # 目标端口是否空�
 
 **规则**：
 
-1. 每个服务必须提供一个健康检查端点，**统一路径格式为 `/api/<service-name>/health`**（如 myservice 对应 `/api/myservice/health`）——这是本机所有项目共同遵守的规范，不是各项目自选路径；Spring Boot 项目通过 `management.endpoints.web.base-path=/api/<service-name>` 配置 Actuator 实现，不使用 Actuator 默认的 `/actuator/health`。健康检查端点只对内网/本机可达，不通过共享 nginx 对外转发。服务对外 API 统一走服务名前缀路径 `/<service-name>/api/`（nginx 剥离前缀后转发到应用内 `/api/`），健康检查经 nginx 即 `/<service-name>/api/health`
+1. 每个服务必须提供一个健康检查端点，**统一路径格式为 `/api/<service-name>/health`**（如 myservice 对应 `/api/myservice/health`）——这是本机所有项目共同遵守的规范，不是各项目自选路径。实现方式两种都可以：写一个只返回 `{status, service}` 的控制器（参照实现采用这种，见 `config/RootController.java`），或用 Actuator 的 `management.endpoints.web.base-path=/api/<service-name>`。含依赖连通性（数据库、磁盘）的深检留在 Actuator 默认 `/actuator/health`，只对本机开放、`show-details=never`
 
-2. 部署脚本在启动/重启进程后，必须轮询这个端点，**最长等待 60 秒**，检测成功后才能继续执行后续步骤（安装/重载 nginx、打印"部署成功"）
+2. 服务对外 API 统一走服务名前缀路径 `/<service-name>/api/`（nginx 剥离前缀后转发到应用内 `/api/`），健康检查经 nginx 即 `/<service-name>/api/health`，可直接用于探活与联调
 
-3. 60 秒内轮询不到成功，视为**部署失败**，中止脚本（非零退出码），不继续任何后续步骤，并提示去哪里看启动日志——不能静默继续或者只打个警告就往下走
+3. 部署脚本在启动/重启进程后，必须轮询这个端点，**最长等待 420 秒**（应用冷启动含 Flyway 迁移、连接池初始化，60 秒对稍大的工程就不够），检测成功后才能继续执行后续步骤（同步/重载 nginx、打印"部署成功"）
 
-4. 轮询间隔不要太短（避免刷日志）也不要太长（避免明明 2 秒就好了却等了 10 秒），推荐 2 秒间隔
+4. 420 秒内轮询不到成功，视为**部署失败**，中止脚本（非零退出码），不继续任何后续步骤，并把 `supervisorctl status` 与日志尾部打出来提示去哪里排查——不能静默继续或者只打个警告就往下走
 
-5. **`supervisorctl restart`/`start` 本身会阻塞到 supervisord 配置里的 `startsecs` 结束才返回**——如果 `startsecs` 设得接近或超过应用真实启动耗时，健康检查会在这段阻塞已经等够之后才开始探测，第一次探测就通过，日志里的"耗时 N 秒"会永远趋近 0。这不是健康检查没生效，是两层等待时间重叠、互相掩盖了。`startsecs` 应该设得**小**（够用来判断"进程有没有立即崩溃"就行，如 3 秒），把"应用是否真正就绪"这件事完全交给健康检查去判断——这样日志里的耗时才反映应用真实的启动时间，而不是被 supervisord 的等待"吃掉"
+5. 轮询间隔不要太短（避免刷日志）也不要太长（避免明明 2 秒就好了却等了 10 秒），参照实现取 5 秒
 
-**参照实现**：由 `/new-deploy`、`/new-java-project` 生成的 deploy.sh 里的 `wait_for_health()` 函数；supervisord 配置中 `startsecs=3`。
+6. **`supervisorctl restart`/`start` 本身会阻塞到 supervisord 配置里的 `startsecs` 结束才返回**——`startsecs` 只用来判定"进程有没有立即崩溃"，必须**远小于**应用真实启动耗时（参照实现取 10 秒），把"应用是否真正就绪"完全交给健康检查去判断。如果 `startsecs` 设得接近或超过真实启动耗时，健康检查会在这段阻塞等够之后才开始探测，第一次探测就通过，日志里的"耗时 N 秒"永远趋近 0——这不是健康检查没生效，是两层等待互相掩盖了，真实启动时间从日志里看不出来
+
+**参照实现**：由 `/new-deploy`、`/new-java-project` 生成的 `deploy.sh` 里的 `wait_service_ready()` / `remote_wait_service_ready()` 函数（`SERVICE_READY_TIMEOUT` 可覆盖 420 秒默认值）；supervisord 配置中 `startsecs=10`。
 
 ---
 
@@ -133,13 +154,22 @@ ss -tln | grep -E ':(<port1>|<port2>)\b'               # 目标端口是否空�
 # 停止服务（不删除部署文件，可随时重启）
 supervisorctl stop <service-name>
 
+# 回滚版本：JAR 按 <service-name>-<版本>.jar 版本化落盘，稳定入口是 <service-name>.jar 软链，
+# 回滚只要把软链指回上一个文件再重启，不需要重新构建
+ls -1 /opt/soft/apps/<service-name>/<service-name>-*.jar
+ln -sfn <service-name>-<旧版本>.jar /opt/soft/apps/<service-name>/<service-name>.jar
+supervisorctl restart <service-name>
+
 # 完全移除（谨慎，仅在确定不再需要时执行）
 supervisorctl stop <service-name>
-rm /etc/supervisor/conf.d/<service-name>.ini
+rm /etc/supervisor/conf.d/<service-name>.conf
 supervisorctl reread && supervisorctl update
-rm /opt/soft/nginx/conf/vhosts/<service-name>.conf     # 如果部署时装过 nginx vhost
-/opt/soft/nginx/sbin/nginx -t && /opt/soft/nginx/sbin/nginx -s reload
+rm /etc/nginx/conf.d/<service-name>.conf               # 如果部署时装过站点配置
+nginx -t && nginx -s reload
 ```
+
+`<service-name>.jar` 软链由部署脚本每次更新指向，回滚利用它就不动脚本与 supervisord 配置；
+这也是版本化落盘（而非覆盖同名 JAR）的目的：**保留历史版本，让回滚是一次 ln 而不是一次重建**。
 
 ---
 
@@ -154,3 +184,38 @@ rm /opt/soft/nginx/conf/vhosts/<service-name>.conf     # 如果部署时装过 n
 **处理**：确认原有独立进程未受影响后，执行 `supervisorctl stop <service-a> <service-b>` 止住了 crash loop，未删除其 `.ini` 配置（保留给对应项目自行决定后续处理）。
 
 **结论**：在这类"部分服务由 supervisord 管理、部分服务独立运行"的混合主机上，**任何一次 supervisord daemon 的启动/重启都可能触发未被管理的影子进程与配置冲突**。这条经验对所有后续在这台主机上部署的项目都适用。
+
+---
+
+## 九、配置与日志安全约定（强制）
+
+这几条是跨项目统一的，不是各项目自选风格——共享主机上排查问题时要横向对比多个项目的配置与日志，
+口径不一致会让"看一眼就知道"变成"每个项目重新学一遍"。
+
+1. **被版本控制跟踪的文件里不出现任何真实凭证**。`application*.yml`、nginx 配置、脚本本体
+   一律 `${环境变量:空默认}`；真值只存在于目标机器的 `/opt/soft/apps/<service-name>/.env`。
+   占位符写 `changeme` 这类明显假值，不要写看起来像真密钥的字符串
+
+2. **每个服务三套环境文件（`.env` / `.env.test` / `.env.prod`）键集必须完全一致**，只改值不改键。
+   环境模板缺键的后果不是启动报错，而是**静默失效**——跨服务调用令牌、开关类配置最容易这样丢，
+   故障会在链路中间才暴露。部署脚本必须比对键集并打警告（参照实现 `check_env_keyset()`）
+
+3. **令牌不进日志**。访问日志里的 `Authorization` 经 `map` 脱敏，只记 `Bearer` 前 8 位
+   （够前缀关联排查，完整令牌不落进一堆人可读、可备份外流的文件）。参照实现见
+   `deploy-conf/nginx/<service-name>.dev.conf` 文件头的 `map $http_authorization`
+
+4. **跨域在 nginx 层用白名单处理，后端不参与**。`map $http_origin` 命中才回带
+   `Access-Control-Allow-Origin`；用 `*` 等于允许任意站点带着凭据跨域调用。
+   来源没命中就一个头都不回，而不是回 `*`
+
+5. **反向代理的超时必须"大于后端超时、小于客户端超时"**。nginx 默认 `proxy_read_timeout` 是 60 秒，
+   比后端调用大模型/第三方接口的超时更短时，会由网关先出 504，客户端拿到的是网关错误页而不是
+   后端可解析的业务错误码，前端无法区分"服务挂了"和"这次没算出来"。这类长耗时路由单独开
+   `location` 放宽超时，不要在通用 `/api/` 上全局放大
+
+6. **静态资源缓存分两类**：带内容哈希的构建产物（如 `_next/static/`）给
+   `max-age=31536000, immutable`；HTML 入口给 `no-cache`。入口页长期缓存会导致发版后旧 HTML
+   引用的 chunk 已被删除，页面白屏且刷不回来
+
+7. **应用进程只绑 `127.0.0.1`**（`server.address`），对外一律经 nginx。直接绑 `0.0.0.0`
+   等于把应用端口暴露在公网，绕过 nginx 层的鉴权、限流、日志与 CORS 口径

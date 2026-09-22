@@ -20,7 +20,7 @@
 | Java | ≥ <JDK_VERSION>（LTS） | 启用虚拟线程等现代特性 |
 | Spring Boot | ≥ 3.x | 应用框架，对外 API 层、依赖注入、配置管理的基础 |
 | Spring Data JPA | ≥ 3.x | 数据访问层，配合 PostgreSQL 使用 |
-| Spring Boot Actuator | ≥ 3.x | 暴露健康检查端点，统一路径格式 `/api/<SERVICE_NAME>/health`（通过 `management.endpoints.web.base-path=/api/<SERVICE_NAME>` 配置，不使用默认的 `/actuator/health`）；只暴露 `health`，不暴露其他端点 |
+| Spring Boot Actuator | ≥ 3.x | 依赖连通性深检走默认 `/actuator/health`（`show-details=never`，只对本机）；规范要求的健康检查端点 `/api/<SERVICE_NAME>/health` 由 `config/RootController.java` 提供，不用 `management.endpoints.web.base-path` 改写 Actuator 路径；对外只暴露 `health,info` |
 | Flyway | 最新稳定版 | 数据库 schema 迁移管理，生产/测试环境禁止用 Hibernate 自动建表替代 |
 | Maven | 最新稳定版 | 依赖与构建管理 |
 
@@ -37,7 +37,8 @@
 **约束**：
 - 数据库名、角色名与服务名保持一致：`<SERVICE_NAME>` / `<SERVICE_NAME>`
 - Schema 由应用启动时的 Flyway 自动迁移管理，禁止手工建表或使用 Hibernate `ddl-auto=create/update`
-- 生产凭证只存在于目标主机的 `/opt/soft/apps/<SERVICE_NAME>/.env`，不进代码库
+- 三套环境变量文件 `src/backend/<SERVICE_NAME>/.env`、`.env.test`、`.env.prod` 键集必须一致，
+  全部不入库；生产凭证只存在于目标机器的 `/opt/soft/apps/<SERVICE_NAME>/.env`
 
 ---
 
@@ -45,7 +46,7 @@
 
 | 用途 | 端口 | 说明 |
 |---|---|---|
-| nginx 对外反向代理 | `<NGINX_PORT>` | 唯一对外入口，见 `deploy-conf/nginx/vhosts/<SERVICE_NAME>.conf` |
+| nginx 对外反向代理 | `<NGINX_PORT>` | 唯一对外入口，见 `deploy-conf/nginx/<SERVICE_NAME>.*.conf` |
 | Spring Boot 应用内部监听 | `<APP_PORT>` | 只绑定 `127.0.0.1`，不直接对外暴露，必须经 nginx 访问（见 `application.yml` 的 `server.address`） |
 
 这两个端口是固定值，变更需先确认目标机器端口占用情况，走第五节升级流程更新本表，不允许部署时临时改动而不回写文档。

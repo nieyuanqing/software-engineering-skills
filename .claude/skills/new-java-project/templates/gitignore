@@ -19,14 +19,18 @@ Thumbs.db
 logs/
 
 # ── 环境变量文件（含密码/密钥等敏感信息，禁止提交）──────────
-# 说明：deploy-conf/env.dev|test|prod 是占位符模板，允许提交；
-#       真实环境值请放在部署主机的 deploy-conf/ 下，不入库。
+# 本工程 env 文件按服务放在 src/backend/<服务名>/ 下：.env（dev）、.env.test、.env.prod，
+# 三份键集必须一致（见 specs/deployment.md），真值只存在各自部署机器上，一律不入库。
 .env
 .env.*
 *.env
 env.local
 *.local
 application-local.yml
+
+# ── SSL 证书与私钥（由 scripts/apply-ssl.sh 装到主机 /etc/nginx/ssl/，仓库内只放占位说明）──
+deploy-conf/nginx/cert/*.pem
+deploy-conf/nginx/cert/*.key
 
 # ── SQL / 数据库文件（导出/备份常含数据与敏感信息）──────────
 *.sql
@@ -50,6 +54,17 @@ yarn-error.log*
 *.zip
 *.tar.gz
 mobile-apps/
+# deploy.sh 的构建日志与 db 同步 dump 落地目录
+runtime/
+# 前端构建归档目录（deploy.sh --target web 的 tar 产物）
+web-tars/
+
+# ── Android 工程（--target android 适用）─────────────────────
+# local.properties 含本机 SDK 绝对路径；.env 含 release 签名 keystore 口令，均不入库
+src/android/local.properties
+src/android/.env
+src/android/keystore/
+src/android/.gradle/
 
 # ── 测试与扫描产物（按需提交报告时可放开）────────────────────
 test/.tmp-*

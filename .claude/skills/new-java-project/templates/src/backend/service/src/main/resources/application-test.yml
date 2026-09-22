@@ -1,0 +1,22 @@
+# test（测试环境独立机器）：连本机 PostgreSQL，日志收到 INFO
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:127.0.0.1}:${DB_PORT:<DB_PORT>}/${DB_NAME:<DB_NAME>}?stringtype=unspecified
+    username: ${DB_USERNAME:<DB_NAME>}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+logging:
+  level:
+    root: INFO
+    <BASE_PACKAGE>: INFO

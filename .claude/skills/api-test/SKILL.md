@@ -94,7 +94,7 @@ description: 全端 API 联调检查与修复。完整扫描工程中所有客�
 2. 各端环境/配置文件：web 的 `.env*`（`NEXT_PUBLIC_*` / `VITE_*`）、小程序的 env 配置或请求封装常量、Android 的 `BuildConfig` / `local.properties` / Retrofit baseUrl、iOS 的 Info.plist / 请求封装常量。
 3. 代理配置：`next.config.*` rewrites、`vite.config.*` server.proxy。
 4. 各端请求封装文件（axios instance / fetch wrapper / Retrofit / URLSession 封装）中硬编码的 baseURL。
-5. `deploy-conf/nginx/vhosts/*.dev.conf` 或 `specs/deployment.md` 中登记的后端地址。
+5. `deploy-conf/nginx/*.dev.conf`（站点配置）或 `specs/deployment.md` 中登记的后端地址。
 
 全部无法确定时，询问用户提供 base url。多个后端服务（不同 context-path）时，按服务分别记录。
 
@@ -110,7 +110,7 @@ description: 全端 API 联调检查与修复。完整扫描工程中所有客�
 检查各端请求封装是否自动附加 `Authorization` 头：
 
 - **需要登录** → 找到登录 API 与凭据来源：
-  - 优先测试环境账号配置（`deploy-conf/env.*.example`、specs 文档、前端 mock）。
+  - 优先测试环境账号配置（`src/backend/<服务名>/.env.test`、specs 文档、前端 mock）。
   - 找不到 → 请用户提供测试账号或一个有效 token。
   - 拿到后先调登录接口换取 token，后续所有探测请求带上 `Authorization` 头。
 - **无需登录** → 直接继续。

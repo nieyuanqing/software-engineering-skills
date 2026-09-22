@@ -24,7 +24,7 @@
 
 | Skill | 说明 |
 |:------------------------------------------------------|---|
-| [`/new‑java‑project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx vhost、env、Spring Boot yml、specs 文档、标准 .gitignore） |
+| [`/new‑java‑project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx 站点配置、三套 .env、Spring Boot yml 与健康检查端点、specs 文档、标准 .gitignore） |
 | [`/new‑deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
 | [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/` |
 | [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本 |
@@ -80,14 +80,14 @@ software-engineering-skills/
     ├── new-nginx-conf/                生成标准通用的 nginx 主机级基础配置
     │   ├── SKILL.md
     │   ├── specs/deployment-common.md 共享主机部署通用规范（共享副本②，与 new-java-project 保持一致）
-    │   └── templates/deploy-conf/nginx/   仅主机级文件（不含 vhost 服务模板）：
+    │   └── templates/deploy-conf/nginx/   仅主机级文件（不含站点配置模板）：
     │       ├── nginx.conf             主配置（worker/事件/http 层通用参数 + include 链）
     │       ├── mime.types             标准 MIME 类型表
     │       ├── subconf/               global/log/ssl/cross_domain/geo/error_pages 六个通用片段
     │       ├── upstream/upstream.conf upstream 扩展点，默认空
     │       ├── cert/README.md         说明 SSL 证书应放在这里，不纳入版本管理
     │       ├── html/                  通用错误页 404/405/500/502/503/504
-    │       └── vhosts/README.md       说明本目录用途（落地一次）
+    │       └── vhosts/README.md       源码安装 nginx 时的 include 目标说明（落地一次）
     └── new-java-project/              为 Java/Spring Boot 工程生成完整部署配置
         ├── SKILL.md
         ├── specs/
@@ -99,21 +99,27 @@ software-engineering-skills/
             ├── scripts/
             │   ├── deploy.sh          部署脚本模板（共享副本①，与 new-deploy 保持一致）
             │   └── apply-ssl.sh       SSL 证书申请脚本模板（共享副本①）
-            ├── deploy-conf/
-            │   ├── env.dev/test/prod  环境变量模板三套（含 SPRING_PROFILES_ACTIVE）
-            │   └── nginx/vhosts/service.{dev,test,prod}.conf  vhost 模板三套（按服务名渲染）
+            ├── deploy-conf/nginx/
+            │   └── service.{dev,test,prod}.conf  站点配置模板三套（按服务名渲染，扁平放在
+            │                          deploy-conf/nginx/ 下，与主机级 nginx.conf 同目录）
             ├── sql/
             │   ├── README.md          sql/ 目录约定说明（备份与更新 SQL 的存放规则）
             │   └── update/.gitkeep    更新脚本目录占位文件（backup/ 不入库，无占位）
-            └── src/main/resources/
-                ├── application.yml    Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点）
-                ├── application-dev.yml    dev profile（show-sql=true，DEBUG 日志，Swagger 开启）
-                ├── application-test.yml   test profile（INFO 日志，Swagger 开启）
-                └── application-prod.yml   prod profile（WARN 日志，Swagger 关闭）
+            └── src/backend/service/
+                ├── .env / .env.test / .env.prod   环境变量模板三套（键集强制对齐，含
+                │                          SPRING_PROFILES_ACTIVE/SERVER_PORT/DB_*，全部不入库）
+                └── src/main/resources/
+                    ├── application.yml    公共配置（端口/地址、时区、上传上限、JPA、Flyway、
+                    │                      Actuator、Swagger 开关，敏感项一律 ${VAR:} 空默认）
+                    ├── application-dev.yml    dev profile（数据源、show-sql=true、DEBUG）
+                    ├── application-test.yml   test profile（数据源、INFO）
+                    └── application-prod.yml   prod profile（数据源、WARN）
+                src/main/java/config/RootController.java   健康检查端点 /api/<name>/health
 ```
 
 > 目标工程里的 `deploy-conf/nginx/` 这棵目录树仍由 `/new-nginx-conf`（主机级文件）与
-> `/new-java-project`（vhost 片段）共同拥有，只是模板副本按职责拆分存放在两个 skill 目录中。
+> `/new-java-project`（`<service>.*.conf` 站点配置）共同拥有，归属靠文件名区分而非子目录隔离，
+> 只是模板副本按职责拆分存放在两个 skill 目录中。
 > 标注"共享副本"的文件修改任一份必须同步另一份（见 CLAUDE.md）。
 
 ---
@@ -146,27 +152,31 @@ software-engineering-skills/
 | `scripts/apply-ssl.sh` | SSL 证书申请（Let's Encrypt + acme.sh，HTTP-01 webroot 验证） |
 | `.gitignore` | 标准忽略清单（含 env 环境变量文件与 SQL/数据库文件；`sql/backup/` 忽略、`sql/update/` 入库；已存在时仅合并缺失条目） |
 | `sql/README.md` + `sql/backup/` + `sql/update/` | 数据库备份与更新 SQL 文件目录（backup 存放备份导出文件不入库，update 存放更新脚本入库） |
-| `deploy-conf/nginx/vhosts/<name>.dev.conf` | nginx vhost — dev 环境（HTTP，无域名） |
-| `deploy-conf/nginx/vhosts/<name>.test.conf` | nginx vhost — test 环境（HTTPS，绑定测试域名） |
-| `deploy-conf/nginx/vhosts/<name>.prod.conf` | nginx vhost — prod 环境（HTTPS，绑定生产域名） |
-| `deploy-conf/env.{dev,test,prod}.example` | 环境变量模板三套（含 `SPRING_PROFILES_ACTIVE`，复制为 `.env` 后填入真实值） |
-| `src/backend/<name>/src/main/resources/application.yml` | Spring Boot 公共配置（端口、数据源、Actuator 健康检查端点） |
-| `src/backend/<name>/src/main/resources/application-{dev,test,prod}.yml` | Spring Boot profile 配置三套（日志级别、SQL 调试、Swagger 开关） |
+| `deploy-conf/nginx/<name>.dev.conf` | nginx 站点配置 — dev 环境（HTTP，无域名；含 CORS 白名单、令牌脱敏日志、upstream、ACME 入口） |
+| `deploy-conf/nginx/<name>.test.conf` | nginx 站点配置 — test 环境（HTTPS，绑定测试域名） |
+| `deploy-conf/nginx/<name>.prod.conf` | nginx 站点配置 — prod 环境（HTTPS，绑定生产域名） |
+| `src/backend/<name>/.env` + `.env.test` + `.env.prod` | 环境变量三套（**键集强制对齐**，含 `SPRING_PROFILES_ACTIVE`/`SERVER_PORT`/`DB_*`；密码为 `changeme` 占位符，全部被 `.gitignore` 忽略） |
+| `src/backend/<name>/src/main/resources/application.yml` | Spring Boot 公共配置（端口/地址、时区、上传上限、JPA、Flyway、Actuator、`SWAGGER_ENABLED` 开关；不含任何真实凭证） |
+| `src/backend/<name>/src/main/resources/application-{dev,test,prod}.yml` | Spring Boot profile 配置三套（数据源按 `DB_HOST/PORT/NAME` 拼装、日志级别、SQL 调试） |
+| `src/backend/<name>/src/main/java/<包>/config/RootController.java` | 健康检查端点 `/api/<name>/health` + 服务说明端点 |
 | `specs/deployment.md` | 本工程专属部署规范文档 |
 | `specs/baseline-versions.md` | 基线版本规范（JDK、PostgreSQL、Spring Boot 等） |
 
 **deploy.sh 能力**（见下方 [`/new-deploy`](#new-deploy) 节的详细说明）：
 - `-t/--target all|backend|web|ssl|android|db`（支持逗号分隔多值，如 `-t backend,web`），`-e/--env dev|test|prod`
-- `-s/--services NAME[,NAME...]` 一次部署多个服务（各自独立的服务目录/日志/supervisor 进程）
+- `-s/--services NAME[,NAME...]` 从脚本顶部服务表选中本次部署的服务（各自独立的服务目录/日志/supervisor 进程/数据库）
 - `-r/--remote USER@HOST` 远程部署（本地构建，rsync 上传，SSH 重启）
 - `--target ssl` 安装 nginx（apt）+ SSL 证书配置
 - supervisord 配置在部署时 inline 生成，Spring 环境通过 `.env` 中的 `SPRING_PROFILES_ACTIVE` 传递
-- mvn/gradle/npm 构建日志静默落盘 `./runtime/`，涉及主机/数据库的日志带"服务名（主机/数据库，本机/远程）"标签
+- 多前端支持（`WEB_APPS` + 四张表，构建时传 `NEXT_BASE_PATH`，按 `--env` 覆盖 `runtime-config.<env>.js`）
+- 部署前比对三套 `.env` 键集，缺键打警告（缺键=该环境静默缺配置）
+- mvn/gradle/npm 构建日志静默落盘 `./runtime/`，涉及服务/库/主机的日志一律点名
 - Phase N/M 阶段日志，`[STATUS] OK/ERROR` 机器可读输出，420s 健康检查
+- 部署目录可覆盖：`APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF_DIR` 等
 
 **所有产物遵循的通用规范**（见 `specs/deployment-common.md`）：
 - 目录约定：`/opt/soft/apps/<name>/`、`/data/logs/apps/<name>/`
-- 健康检查端点：应用内 `/api/<name>/health`，经 nginx 为 `/<name>/api/health`（Spring Boot Actuator，`startsecs=10`，最长等待 420s）
+- 健康检查端点：应用内 `/api/<name>/health`（由生成的 `RootController` 提供），经 nginx 为 `/<name>/api/health`（`startsecs=10` 只防立即崩溃，最长等待 420s）
 - 部署日志格式：`[YYYY-MM-DD HH:MM:SS] [deploy.sh] ...`，阶段编号：`Phase N/M`
 - 共享主机安全规范：不自动 `systemctl start supervisor`，不随意改动其他项目配置
 
@@ -206,11 +216,12 @@ software-engineering-skills/
 | `--remote USER@HOST` | 远程部署（`-r` 简写）：本地 Maven 构建，rsync 上传 JAR，SSH 远程重启 |
 | `--target ssl` | 完整 nginx 安装（apt）+ 主配置 + 站点配置；仅支持 `test\|prod` |
 | `--target db` / `--db` | pg_dump 本地库 → rsync → 远程 drop+create+restore（可叠加在 backend 后） |
-| 自动 nginx 同步 | backend 部署后自动同步站点配置并 reload（目标已装 nginx 时） |
+| 自动 nginx 同步 | backend 部署后自动同步站点配置（`nginx -t` 通过才 reload；目标未装 nginx 则跳过） |
 | inline supervisord 配置 | 部署时写入 `/etc/supervisor/conf.d/<name>.conf`，不依赖静态 ini 文件 |
-| env 文件按环境选择 | 自动选取 `.env` / `.env.test` / `.env.prod`（来自 `src/backend/<name>/`） |
+| env 文件按环境选择 | 自动选取 `.env` / `.env.test` / `.env.prod`（来自 `src/backend/<name>/`，缺失时回退 `.env` 并告警） |
 | 构建日志静默落盘 | mvn/gradle/npm 过程日志不显示在终端，写入 `./runtime/deploy-*-<时间戳>.log`（失败时打印末尾 120 行） |
-| 主机/数据库日志标签 | 涉及主机/数据库的日志统一带 `<name>（主机\|数据库，本机\|远程）` 标签，便于按服务定位 |
+| env 键集比对 | 部署前比对 `.env` 与 `.env.<环境>` 的键集，缺键打警告（缺键=该环境静默缺配置） |
+| 路径可覆盖 | `APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF*`/`SERVICE_READY_TIMEOUT` |
 | Phase N/M 日志 | 编号阶段日志，`[STATUS] OK/ERROR` 机器可读输出行 |
 | 健康检查 | `http://127.0.0.1:<APP_PORT>/api/<name>/health`，最长等待 420s |
 | 版本化 JAR + 软链接 | `<name>-<version>.jar` + `<name>.jar` 软链接，支持手动回滚 |
@@ -224,10 +235,14 @@ software-engineering-skills/
 （skill 自带 `templates/deploy-conf/nginx/` 副本），提炼自一台生产主机的 `/opt/soft/nginx/conf`。
 
 `deploy-conf/nginx/` 这棵目录树由 `/new-nginx-conf` 与 `/new-java-project` 共同拥有，但各自只处理
-自己负责的文件：`/new-nginx-conf` 生成主机级的 nginx 本身（`nginx.conf`、`subconf/`、`upstream/`、
-`cert/README.md`、`html/`、`vhosts/README.md`），一台主机通常只需要执行一次；`/new-java-project`
-生成单个服务的 vhost 片段（`vhosts/<name>.{dev,test,prod}.conf`），每接入一个新服务执行一次。两者
-互不覆盖对方的产物。
+自己负责的文件，**归属靠文件名区分而不是子目录**：`/new-nginx-conf` 生成主机级的 nginx 本身
+（`nginx.conf`、`subconf/`、`upstream/`、`cert/README.md`、`html/`、`vhosts/README.md`），一台主机
+通常只需要执行一次；`/new-java-project` 生成单个站点的配置（扁平的 `<name>.{dev,test,prod}.conf`），
+每接入一个新服务执行一次。两者互不覆盖对方的产物。
+
+部署时站点配置由 `scripts/deploy.sh` 装到 `$NGINX_CONF_DIR/<name>.conf`：apt 安装的 nginx 用默认值
+`/etc/nginx/conf.d`；源码安装到 `/opt/soft/nginx` 的主机把 `NGINX_CONF_DIR` 指到
+`/opt/soft/nginx/conf/vhosts`，即本 skill `nginx.conf` 里 `include vhosts/*.conf;` 的目录。
 
 **用法**
 
@@ -247,7 +262,7 @@ software-engineering-skills/
 | `deploy-conf/nginx/subconf/cross_domain.conf` | 通用 CORS 片段 |
 | `deploy-conf/nginx/subconf/{global,geo,error_pages}.conf` | 扩展点 / IP 名单 / 统一错误页映射 |
 | `deploy-conf/nginx/upstream/upstream.conf` | upstream 扩展点（默认空，按需声明负载均衡组） |
-| `deploy-conf/nginx/vhosts/README.md` | 说明各服务 vhost 配置放在这里（`<name>.*.conf` 由 `/new-java-project` 生成） |
+| `deploy-conf/nginx/vhosts/README.md` | 源码安装 nginx 时的 include 目标说明（站点配置 `<name>.*.conf` 由 `/new-java-project` 生成在上一级目录） |
 | `deploy-conf/nginx/cert/README.md` | 说明 SSL 证书应放在这里（不纳入版本管理） |
 | `deploy-conf/nginx/html/{404,405,500,502,503,504}.html` | 通用错误页 |
 
@@ -695,7 +710,7 @@ software-engineering-skills/
 
 | 参数 | 说明 |
 |---|---|
-| `--dst-db` | **必填，无默认值**：目标环境远程主机名。缺失只提醒不猜测，也不会拿本项目 `deploy-conf/env.prod` 顶替 |
+| `--dst-db` | **必填，无默认值**：目标环境远程主机名。缺失只提醒不猜测，也不会拿本项目 `src/backend/<服务>/.env.prod` 顶替 |
 | `--src-db` | 源环境 `dev`（默认）/ `test` / `prod`，分别读 `src/backend/<服务>/.env`、`.env.test`、`.env.prod` |
 | `--src-host` | 源侧也在远程主机时使用（默认本机直连） |
 | `--service` | 定位 `src/backend/<服务>/` 与远端 `/opt/soft/apps/<服务>/.env`；本机仅一个后端时自动识别 |

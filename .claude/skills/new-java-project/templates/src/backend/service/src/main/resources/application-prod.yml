@@ -1,0 +1,23 @@
+# prod（生产环境独立机器）：日志只留 WARN 以上，避免业务数据进日志
+# OpenAPI 文档由 .env.prod 里的 SWAGGER_ENABLED=false 关闭（开关在 application.yml）
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:127.0.0.1}:${DB_PORT:<DB_PORT>}/${DB_NAME:<DB_NAME>}?stringtype=unspecified
+    username: ${DB_USERNAME:<DB_NAME>}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+logging:
+  level:
+    root: WARN
+    <BASE_PACKAGE>: INFO

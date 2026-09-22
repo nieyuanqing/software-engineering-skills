@@ -1,0 +1,67 @@
+# <SERVICE_NAME> 公共配置（三套环境共用；环境差异写在 application-<profile>.yml）
+#
+# 约定一：本文件被纳入版本管理，因此**不写任何真实凭证**。所有敏感项一律
+#         `${环境变量:空默认}`，真值由 src/backend/<SERVICE_NAME>/.env* 注入。
+# 约定二：端口/地址从环境变量取，默认值与 specs/deployment.md 登记的端口一致，
+#         这样 `mvn spring-boot:run` 不带 .env 也能起来，但起来的是安全的本地默认。
+
+server:
+  port: ${SERVER_PORT:<APP_PORT>}
+  # 只绑 127.0.0.1，对外访问必须经 nginx 反向代理；共享主机上直接绑 0.0.0.0
+  # 等于把应用端口暴露在公网，绕过了 nginx 层的鉴权/限流/日志。
+  address: ${SERVER_ADDRESS:127.0.0.1}
+
+spring:
+  application:
+    name: <SERVICE_NAME>
+
+  # 时间字段统一按东八区输出。Jackson 默认把上下文时区按 UTC 归一，
+  # 库内 16:26:02+08 会被序列化成 ...T08:26:02Z，前端按字符串截断展示就早了 8 小时。
+  jackson:
+    time-zone: Asia/Shanghai
+
+  servlet:
+    multipart:
+      # 默认 1MB 会直接拒掉手机拍照原图（10MB+）；按业务最大文件放开，
+      # 且必须 ≤ nginx 站点的 client_max_body_size，否则大文件由网关先拒
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:200MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:210MB}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate        # 禁止自动建表/改表，由 Flyway 管理 schema 变更
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true           # /actuator/health/liveness + /readiness
+      show-details: never       # 不把内部依赖详情（DB/磁盘）暴露给访问者
+
+# 健康检查端点统一为 /api/<SERVICE_NAME>/health（见 specs/deployment-common.md 第六节）。
+# 该路径由 config/RootController.java 提供（同路径还返回服务说明），不走 Actuator 的
+# base-path 改写：Actuator 保持在默认 /actuator/* 下，只用于本机排查。
+# 部署脚本与 nginx 站点配置都按这个路径对接。
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:true}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:true}
+    path: /swagger-ui/index.html
+    operations-sorter: method
+    tags-sorter: alpha
