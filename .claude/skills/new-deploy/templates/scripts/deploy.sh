@@ -201,7 +201,14 @@ read_backend_version() {
     local pom="$1" service="$2" version=""
     [ -f "$pom" ] || return 0
     version="$(awk -v svc="$service" '
-        index($0, "<artifactId>" svc "</artifactId>") { found = 1; next }
+        index($0, "<artifactId>" svc "</artifactId>") {
+            # 同一行就跟着 <version> 的紧凑写法（minify 过的 pom）也要能取到
+            if (match($0, /<version>[^<]*<\/version>/)) {
+                v = substr($0, RSTART + 9, RLENGTH - 19)
+                print v; exit
+            }
+            found = 1; next
+        }
         found && /<version>/ {
             gsub(/.*<version>|<\/version>.*/, "", $0)
             print $0
@@ -245,7 +252,53 @@ get_jar_path() {
 }
 
 # ── supervisord 配置（inline 生成，不在版本库中维护静态 ini）──────
-# 本地与远程共用同一份正文，避免两处 startsecs/日志路径各改各的导致行为不一致
+# 程序配置的后缀由目标主机 supervisord 的 [include] files= 模式决定，不是固定 .conf：
+# apt 安装默认 include *.conf，但不少在跑的主机被改成只 include *.ini。写错后缀的文件
+# supervisord 根本不读，reread/update 也不报错，服务继续按上一份定义运行——属于
+# "改了配置不生效且没有任何提示"那类故障。这里现问主机配置决定后缀，并对未被加载的
+# 同名孪生文件给出告警。
+
+supervisor_include_text() {
+    if [ -n "$REMOTE_HOST" ]; then
+        remote_exec "cat $SUPERVISOR_CONF" 2>/dev/null || true
+    elif [ -f "$SUPERVISOR_CONF" ]; then
+        cat "$SUPERVISOR_CONF"
+    fi
+}
+
+# 解析主机 [include] files= 里的后缀；显式 SUPERVISOR_CONF_SUFFIX 优先，解析不到退回 apt 默认 conf
+detect_supervisor_suffix() {
+    local patterns
+    if [ -n "${SUPERVISOR_CONF_SUFFIX:-}" ]; then
+        printf '%s\n' "$SUPERVISOR_CONF_SUFFIX"
+        return 0
+    fi
+    # awk 不提前 exit：管道里读 stdin 的命令提前收到退出会拿 SIGPIPE，pipefail 下静默中止部署
+    patterns="$(supervisor_include_text | awk '/^[[:space:]]*files[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); print }')"
+    # 只匹配 glob 本体（"*.conf" / "*.ini"），不能匹配裸 "conf"——include 路径里就带 conf.d
+    case "$patterns" in
+        *"*.conf"*) printf 'conf\n' ;;
+        *"*.ini"*)  printf 'ini\n' ;;
+        *)          printf 'conf\n' ;;
+    esac
+}
+
+supervisor_program_conf() {
+    printf '%s/%s.%s\n' "$SUPERVISOR_CONF_DIR" "$1" "$SUPERVISOR_SUFFIX"
+}
+
+# 另一个后缀的同名文件：要么是没被 include 的死文件，要么与本次写入重复定义同一 program
+warn_supervisor_twin() {
+    local service="$1" twin other
+    other="conf"
+    [ "$SUPERVISOR_SUFFIX" = "conf" ] && other="ini"
+    twin="$SUPERVISOR_CONF_DIR/$service.$other"
+    if { [ -n "$REMOTE_HOST" ] && remote_exec "test -f $twin" 2>/dev/null; } \
+        || { [ -z "$REMOTE_HOST" ] && [ -f "$twin" ]; }; then
+        log "警告: 存在另一后缀的本服务配置 $twin（本次写入的是 .$SUPERVISOR_SUFFIX）"
+        log "      两者只有一份会被 supervisord 加载，另一份会误导排查；确认无用后删除：rm $twin"
+    fi
+}
 
 supervisor_conf_body() {
     local service="$1"
@@ -273,9 +326,11 @@ EOF
 write_supervisor_conf() {
     local service="$1"
     local log_dir="$LOG_ROOT/$service"
-    local conf_file="$SUPERVISOR_CONF_DIR/$service.conf"
+    local conf_file
+    conf_file="$(supervisor_program_conf "$service")"
     mkdir -p "$log_dir" "$SUPERVISOR_CONF_DIR"
     supervisor_conf_body "$service" >"$conf_file"
+    warn_supervisor_twin "$service"
 }
 
 # ── env 文件：按环境选择 .env / .env.test / .env.prod ──────────────
@@ -344,7 +399,7 @@ deploy_service_jar() {
         log "警告: 未找到 $service 的 env 文件: $env_file"
     fi
 
-    log "写入 supervisor 配置: $SUPERVISOR_CONF_DIR/$service.conf"
+    log "写入 supervisor 配置: $(supervisor_program_conf "$service")"
     write_supervisor_conf "$service"
     log "已部署 JAR: $service -> $target_jar"
 }
@@ -367,7 +422,8 @@ remote_deploy_service_jar() {
     local service="$1"
     local app_dir="$APP_ROOT/$service"
     local log_dir="$LOG_ROOT/$service"
-    local conf_file="$SUPERVISOR_CONF_DIR/$service.conf"
+    local conf_file
+    conf_file="$(supervisor_program_conf "$service")"
     local jar_file target_jar env_file backend_dir version
     backend_dir="$(service_backend_dir "$service")"
     version="${SERVICE_VERSIONS[$service]}"
@@ -909,6 +965,7 @@ DEPLOY_CONF_DIR="$PROJECT_DIR/deploy-conf"
 RUNTIME_DIR="$PROJECT_DIR/runtime"
 SUPERVISOR_CONF="${SUPERVISOR_CONF:-/etc/supervisor/supervisord.conf}"
 SUPERVISOR_CONF_DIR="${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}"
+SUPERVISOR_SUFFIX=""               # 实际后缀在部署前按目标主机 [include] 模式解析后填入
 NGINX_CONF_DIR="${NGINX_CONF_DIR:-/etc/nginx/conf.d}"
 NGINX_SSL_DIR="${NGINX_SSL_DIR:-/etc/nginx/ssl}"
 SELECTED_SERVICES=("${SERVICES[@]}")
@@ -1057,6 +1114,12 @@ log "  部署 Nginx     : $NGINX_DEPLOY_EFFECTIVE"
 log "======================================================"
 
 mkdir -p "$RUNTIME_DIR"
+
+# ── supervisord 程序配置后缀（跟随目标主机的 [include] 模式）──────
+if [ "$DEPLOY_BACKEND" = true ]; then
+    SUPERVISOR_SUFFIX="$(detect_supervisor_suffix)"
+    log "supervisor 程序配置写入后缀: .$SUPERVISOR_SUFFIX（来源: 目标主机 $SUPERVISOR_CONF 的 [include] files=，可用 SUPERVISOR_CONF_SUFFIX 强制指定）"
+fi
 
 # ── 部署前自检：Web 工程与 env 文件（只提示，不阻断）─────────────
 if [ "$DEPLOY_WEB" = true ]; then

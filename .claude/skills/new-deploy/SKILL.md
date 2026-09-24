@@ -54,11 +54,13 @@ deploy.sh 主要能力
         回滚只需把软链指回旧版本；JAR 定位兼容 <服务>/target 与多模块 <服务>/*/target
   多前端: WEB_APPS + WEB_APP_SOURCE/DEPLOY/BASE_PATH/PROJECT_ID 四张表，构建时用 NEXT_BASE_PATH
         传路由前缀（须与 nginx location 一致），并按 --env 覆盖 runtime-config.<env>.js
-  supervisord 配置: 部署时 inline 生成，不依赖静态 ini 文件
+  supervisord 配置: 部署时 inline 生成，不依赖静态 ini 文件；文件后缀现问目标主机
+        [include] files= 模式决定（.conf 或 .ini），可用 SUPERVISOR_CONF_SUFFIX 强制指定
   env 文件: 按环境选择 .env / .env.test / .env.prod（来自 src/backend/<SERVICE_NAME>/），
         部署前比对 .env 与目标环境文件的键集，缺键打警告（缺键=该环境静默缺配置）
   路径可覆盖: APP_ROOT / LOG_ROOT / SUPERVISOR_CONF / SUPERVISOR_CONF_DIR /
-        NGINX_CONF_DIR / NGINX_SSL_DIR / WEB_DEPLOY_PATH / PUBLIC_IP（默认值见脚本顶部）
+        SUPERVISOR_CONF_SUFFIX / NGINX_CONF_DIR / NGINX_SSL_DIR /
+        WEB_DEPLOY_PATH / PUBLIC_IP（默认值见脚本顶部）
   构建日志: mvn/gradle/npm 过程日志不在终端显示，落盘 ./runtime/deploy-*-<时间戳>.log（失败时打印末尾 120 行）
   日志标签: 涉及具体服务/库/主机的日志一律点名（"上传 JAR: pay → root@host:..."），多服务部署时可区分是谁
   日志格式: [YYYY-MM-DD HH:MM:SS] [deploy.sh] ... + Phase N/M 阶段编号
@@ -267,6 +269,6 @@ chmod +x scripts/deploy.sh scripts/apply-ssl.sh
 
 - 目标文件已存在时，走 **1.0 Update 流程**（自动提取参数 → 展示差异 → 确认覆盖），不要静默覆盖，也不要重新询问所有参数。
 - deploy.sh 要求在**项目根目录**执行（`bash scripts/deploy.sh`），脚本内部会校验 `pwd` 是否等于 `$PROJECT_DIR`。
-- supervisord 配置由 deploy.sh 在部署时 inline 生成到 `/etc/supervisor/conf.d/<SERVICE_NAME>.conf`，无需在版本库中维护静态 ini 文件。
+- supervisord 配置由 deploy.sh 在部署时 inline 生成到 `/etc/supervisor/conf.d/<SERVICE_NAME>.<后缀>`，无需在版本库中维护静态文件。后缀现问目标主机 `$SUPERVISOR_CONF` 的 `[include] files=` 模式（apt 默认 `*.conf`，在跑的主机常改成只 `*.ini`）——写错后缀的文件 supervisord 不加载也不报错，改配置会静默不生效；也可用 `SUPERVISOR_CONF_SUFFIX` 强制指定。
 - Spring 环境（dev/test/prod）通过 env 文件中的 `SPRING_PROFILES_ACTIVE` 传递，deploy.sh 不硬编码 `--spring.profiles.active`。
 - nginx 路径约定：`/etc/nginx/conf.d/<SERVICE_NAME>.conf`，SSL 证书放在 `/etc/nginx/ssl/<DOMAIN>.pem`。

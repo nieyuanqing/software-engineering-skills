@@ -1,0 +1,12 @@
+-- V0: 结构基线（空库 bootstrap 用）
+-- @probe: manual
+--
+-- 判 manual 是刻意的：基线不是增量，对已有表的库跑它会在第一个 CREATE TABLE 上失败（半应用状态），
+-- 所以 scripts/db-migrate.sh 永不代跑它，只在报告里显示「需人工」。要落基线请人工执行：
+--     bash scripts/db-sql.sh -e dev -s <SERVICE_NAME> --apply -f deploy-conf/db/migrations/<SERVICE_NAME>/V0__baseline.sql
+--
+-- 本文件当前不含任何 DDL —— 把它填成本服务真实结构的 schema-only 快照，两种填法见本目录 README.md 第〇节：
+--     pg_dump --schema-only --no-owner --no-privileges -h 127.0.0.1 -U <DB_NAME> <DB_NAME> > V0__baseline.sql
+-- 未填写之前，对任何库执行它都是 0 变更（不会误建，也不会误判成"结构已就位"）。
+--
+-- 填完之后新增的增量从 V1 起编号：V1__<主题>.sql，头部必须紧跟一行 -- @probe:（写法见 README.md 第三节）。

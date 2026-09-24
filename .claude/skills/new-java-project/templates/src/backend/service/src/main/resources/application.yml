@@ -29,7 +29,8 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: validate        # 禁止自动建表/改表，由 Flyway 管理 schema 变更
+      # 只校验不建表：实体与库不一致就让启动失败，不让 Hibernate 顺手改结构
+      ddl-auto: validate
     show-sql: false
     open-in-view: false
     properties:
@@ -37,8 +38,12 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: false
 
+  # schema 变更只有一条路径：deploy-conf/db/migrations/<服务>/V<n>__*.sql + scripts/db-migrate.sh
+  # （现问目标库判「已应用／待应用」，不建记账表；用法见该目录 README.md）。
+  # Flyway 依赖与开关位留着但默认关：两套机制同时开＝两条记账路径，同一个变更会有两个互相矛盾的答案。
+  # 要改由 Flyway 接管，先把迁移脚本放进 locations 并对已有库做 baseline，再把这里的默认值翻成 true。
   flyway:
-    enabled: true
+    enabled: ${FLYWAY_ENABLED:false}
     locations: classpath:db/migration
 
 management:

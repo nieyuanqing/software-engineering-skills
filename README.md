@@ -98,18 +98,22 @@ software-engineering-skills/
         └── templates/
             ├── scripts/
             │   ├── deploy.sh          部署脚本模板（共享副本①，与 new-deploy 保持一致）
-            │   └── apply-ssl.sh       SSL 证书申请脚本模板（共享副本①）
-            ├── deploy-conf/nginx/
-            │   └── service.{dev,test,prod}.conf  站点配置模板三套（按服务名渲染，扁平放在
+            │   ├── apply-ssl.sh       SSL 证书申请脚本模板（共享副本①）
+            │   ├── db-migrate.sh      数据库迁移层模板（只做增量、不连库，回调 db-sql.sh）
+            │   └── db-sql.sh          数据库执行层模板（唯一连库处，默认只读、写只认 --apply）
+            ├── deploy-conf/
+            │   ├── db/migrations/service/
+            │   │                      迁移 SQL 目录模板（README + V0__baseline.sql 占位，入库；
+            │   │                          migrate-records/ 留痕不入库，运行时自动创建）
+            │   └── nginx/
+            │       └── service.{dev,test,prod}.conf  站点配置模板三套（按服务名渲染，扁平放在
             │                          deploy-conf/nginx/ 下，与主机级 nginx.conf 同目录）
-            ├── sql/
-            │   ├── README.md          sql/ 目录约定说明（备份与更新 SQL 的存放规则）
-            │   └── update/.gitkeep    更新脚本目录占位文件（backup/ 不入库，无占位）
+            ├── sql/README.md          sql/ 目录约定说明（只放数据库备份导出，不入库）
             └── src/backend/service/
                 ├── .env / .env.test / .env.prod   环境变量模板三套（键集强制对齐，含
                 │                          SPRING_PROFILES_ACTIVE/SERVER_PORT/DB_*，全部不入库）
                 └── src/main/resources/
-                    ├── application.yml    公共配置（端口/地址、时区、上传上限、JPA、Flyway、
+                    ├── application.yml    公共配置（端口/地址、时区、上传上限、JPA、Flyway 默认关、
                     │                      Actuator、Swagger 开关，敏感项一律 ${VAR:} 空默认）
                     ├── application-dev.yml    dev profile（数据源、show-sql=true、DEBUG）
                     ├── application-test.yml   test profile（数据源、INFO）
@@ -150,13 +154,16 @@ software-engineering-skills/
 |---|---|
 | `scripts/deploy.sh` | 部署脚本（见下方"deploy.sh 能力"） |
 | `scripts/apply-ssl.sh` | SSL 证书申请（Let's Encrypt + acme.sh，HTTP-01 webroot 验证） |
-| `.gitignore` | 标准忽略清单（含 env 环境变量文件与 SQL/数据库文件；`sql/backup/` 忽略、`sql/update/` 入库；已存在时仅合并缺失条目） |
-| `sql/README.md` + `sql/backup/` + `sql/update/` | 数据库备份与更新 SQL 文件目录（backup 存放备份导出文件不入库，update 存放更新脚本入库） |
+| `scripts/db-migrate.sh` | 数据库**迁移层**：只做增量，认 `V<n>__*.sql` + 文件头 `-- @probe:`，现问目标库判六态，按版本序执行，本地写留痕（见下方"数据库两层"） |
+| `scripts/db-sql.sh` | 数据库**执行层**：唯一连库处，取连接参数/拼 ssh/起 psql；默认只读，写只认 `--apply` |
+| `deploy-conf/db/migrations/<name>/` | 迁移 SQL 目录（`README.md` 约定 + `V0__baseline.sql` 占位）；SQL **入库**，`../migrate-records/` 留痕不入库 |
+| `.gitignore` | 标准忽略清单（含 env 环境变量文件与 SQL/数据库文件；`sql/backup/` 与留痕忽略、迁移 SQL 入库例外；已存在时仅合并缺失条目） |
+| `sql/README.md` + `sql/backup/` | 数据库备份目录（备份导出文件不入库；结构变更脚本改放 `deploy-conf/db/migrations/`） |
 | `deploy-conf/nginx/<name>.dev.conf` | nginx 站点配置 — dev 环境（HTTP，无域名；含 CORS 白名单、令牌脱敏日志、upstream、ACME 入口） |
 | `deploy-conf/nginx/<name>.test.conf` | nginx 站点配置 — test 环境（HTTPS，绑定测试域名） |
 | `deploy-conf/nginx/<name>.prod.conf` | nginx 站点配置 — prod 环境（HTTPS，绑定生产域名） |
 | `src/backend/<name>/.env` + `.env.test` + `.env.prod` | 环境变量三套（**键集强制对齐**，含 `SPRING_PROFILES_ACTIVE`/`SERVER_PORT`/`DB_*`；密码为 `changeme` 占位符，全部被 `.gitignore` 忽略） |
-| `src/backend/<name>/src/main/resources/application.yml` | Spring Boot 公共配置（端口/地址、时区、上传上限、JPA、Flyway、Actuator、`SWAGGER_ENABLED` 开关；不含任何真实凭证） |
+| `src/backend/<name>/src/main/resources/application.yml` | Spring Boot 公共配置（端口/地址、时区、上传上限、JPA、`FLYWAY_ENABLED`（默认 false）、Actuator、`SWAGGER_ENABLED` 开关；不含任何真实凭证） |
 | `src/backend/<name>/src/main/resources/application-{dev,test,prod}.yml` | Spring Boot profile 配置三套（数据源按 `DB_HOST/PORT/NAME` 拼装、日志级别、SQL 调试） |
 | `src/backend/<name>/src/main/java/<包>/config/RootController.java` | 健康检查端点 `/api/<name>/health` + 服务说明端点 |
 | `specs/deployment.md` | 本工程专属部署规范文档 |
@@ -173,6 +180,23 @@ software-engineering-skills/
 - mvn/gradle/npm 构建日志静默落盘 `./runtime/`，涉及服务/库/主机的日志一律点名
 - Phase N/M 阶段日志，`[STATUS] OK/ERROR` 机器可读输出，420s 健康检查
 - 部署目录可覆盖：`APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF_DIR` 等
+
+**数据库两层**（`db-migrate.sh` ＋ `db-sql.sh`，一次生成分不开的一对）：
+- **迁移层** `db-migrate.sh`：只认 `deploy-conf/db/migrations/<服务>/V<n>__*.sql` 与文件头 `-- @probe:`，
+  现问目标库判六态（已应用／待应用／需人工／重复执行／未标注／探测出错），按版本号升序只补增量；
+  **不建记账表**，也**永不 DROP／重建／从备份恢复**（那属 `deploy.sh --target db`）
+- **执行层** `db-sql.sh`：唯一连库处（取连接参数、拼 ssh、起 psql 只这一处实现）；默认只读
+  （数据库侧强制 `default_transaction_read_only=on`），写只认显式 `--apply`；prod 写默认拒跑，
+  只接受迁移层双确认后转来的 `--prod-approved`
+- 远端只认显式 `-r <user@host>`：脚本内不登记目标机，缺 `-r` 时查询走**离线答复**（照录本地留痕
+  并标明快照时刻），升级在连库前直接拒绝 —— 免得照本机 `.env.test` 的 `127.0.0.1` 连到 dev 库出假绿
+- 护栏：`-q` 全程只读（执行函数带"查询模式不得执行"的自我保护）、远端写必须 `--yes`、
+  prod 必须 `--yes` + `--confirm-prod`、`需人工／未标注／探测出错` 三类永不自动执行
+- 留痕：每次真问过库往 `deploy-conf/db/migrate-records/<env>.md` 追加一节（命令、结论、
+  逐服务库身份指纹、判定表、待应用与本次执行清单），**只写本地、目标机上不留任何文件、凭据不写入**
+- 报告与留痕同构、按显示列宽排版（中文表头不错位），`>>` 标出待应用，结尾固定一段"本次运行总结"
+  给出**与本次范围一致**的下一步命令（带 `-r`/`-s`/`--only`，照着敲不会意外扩大执行面）
+- 没有 `--dry-run`（要看清单用 `-q`，两份实现只会互相漂移）、没有 `--apply`（那是执行层的参数）
 
 **所有产物遵循的通用规范**（见 `specs/deployment-common.md`）：
 - 目录约定：`/opt/soft/apps/<name>/`、`/data/logs/apps/<name>/`
@@ -217,7 +241,7 @@ software-engineering-skills/
 | `--target ssl` | 完整 nginx 安装（apt）+ 主配置 + 站点配置；仅支持 `test\|prod` |
 | `--target db` / `--db` | pg_dump 本地库 → rsync → 远程 drop+create+restore（可叠加在 backend 后） |
 | 自动 nginx 同步 | backend 部署后自动同步站点配置（`nginx -t` 通过才 reload；目标未装 nginx 则跳过） |
-| inline supervisord 配置 | 部署时写入 `/etc/supervisor/conf.d/<name>.conf`，不依赖静态 ini 文件 |
+| inline supervisord 配置 | 部署时写入 `/etc/supervisor/conf.d/<name>.<后缀>`，后缀现问目标主机 `[include] files=` 模式（`.conf` 或 `.ini`；写错则 supervisord 根本不加载该文件） |
 | env 文件按环境选择 | 自动选取 `.env` / `.env.test` / `.env.prod`（来自 `src/backend/<name>/`，缺失时回退 `.env` 并告警） |
 | 构建日志静默落盘 | mvn/gradle/npm 过程日志不显示在终端，写入 `./runtime/deploy-*-<时间戳>.log`（失败时打印末尾 120 行） |
 | env 键集比对 | 部署前比对 `.env` 与 `.env.<环境>` 的键集，缺键打警告（缺键=该环境静默缺配置） |
@@ -365,7 +389,8 @@ software-engineering-skills/
 
 ### 人工待办
 1. @运维 部署后重启 supervisor 服务 <name>（上线时执行）
-2. @DBA 手工执行 sql/update/2026-08-31_xxx.sql（部署前）
+2. @DBA 在 test 机执行 deploy-conf/db/migrations/<name>/V7__xxx.sql（部署前：
+   `bash scripts/db-migrate.sh -e test -r <user@host> --yes`）
 （无人工介入项时本块只写一行：1. 无）
 ```
 
