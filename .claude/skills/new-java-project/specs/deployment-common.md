@@ -4,7 +4,7 @@
 > 主机上可能同时运行着多个不相关项目，共用同一套 supervisord、nginx、目录结构。
 > 任何要在这台主机上部署新服务的人，都应该先读这份文档，而不是各自摸索一套部署方式。
 > 项目专属的部署细节（端口分配、数据库名、部署脚本用法）见各项目自己的 `specs/deployment.md`。
-> 版本：v1.3 ｜ 日期：2026-09-24
+> 版本：v1.4 ｜ 日期：2026-09-24
 
 ---
 
@@ -77,7 +77,18 @@ apt 安装默认 include `/etc/supervisor/conf.d/*.conf`，但在跑的主机常
 
 4. **只删除/修改 `/etc/supervisor/conf.d/` 下与本项目相关的程序配置文件**（后缀按第一节规则，`.conf` 或 `.ini`），即使看到其他明显失效的配置（如指向已被别的进程占用同一端口的重复配置），也只在该配置所属项目的人明确要求时才处理，处理前确认清楚该配置对应的服务是否有其他形式的存活实例，避免误删还在被使用的配置
 
-5. **"完整执行"和"只做自己那部分"要分开设计**——部署脚本必须能只动自己那一份配置，不要一把全上。
+5. **判断「某个 program 组有没有被 supervisord 加载」，判 `supervisorctl status <name>` 的**输出文本**，
+   不要拿它的退出码当存在性判据**。退出码是**状态码**（supervisor 4.2.5 实测）：
+   `0` ＝ RUNNING；`3` ＝ 组存在但当前不在 RUNNING（`STOPPED`/`STARTING`/`BACKOFF`/`FATAL` 都算）；
+   `4` ＝ 名字不认识，输出 `<name>: ERROR (no such process)`。
+   `if ! supervisorctl status X` 会把「存在但停着」当成「没登记」——为重建库先 `stop` 再部署、
+   上一轮部署失败留下 `STOPPED`/`BACKOFF`、主机重启后子进程未自启，三种场景都会误杀，
+   而且把人指向「核对 include 与后缀」这条错方向。反过来，登记与否判不出来也不能放任静默：
+   `status` 问不到 daemon（非 0 且没有状态词）要当场报错并附原始输出，否则紧随其后的
+   `restart`/`start` 双双失败会被 `set -e` 吞掉，整个部署"突然结束"且没有任何结论行。
+   参照实现：`deploy.sh` 的 `require_supervisor_group()`（在 `reread`/`update` 之后、`restart` 之前调用）。
+
+6. **"完整执行"和"只做自己那部分"要分开设计**——部署脚本必须能只动自己那一份配置，不要一把全上。
    `/new-java-project`、`/new-deploy` 生成的 `deploy.sh` 的落地方式：常规后端部署**只同步本站点**
    的 `/etc/nginx/conf.d/<service-name>.conf`（拷文件 → `nginx -t` 通过才 reload），nginx 未安装时
    跳过并记日志；安装 nginx 本体与主配置是独立的 `--target ssl` 动作，不会跟着常规部署发生
@@ -215,6 +226,36 @@ nginx -t && nginx -s reload
 
 **结论**：后缀不是风格问题，是"这台机的 supervisord 到底读哪些文件"的事实。部署脚本必须
 现问主配置决定（见第一节），并在发现另一后缀同名文件时告警。
+
+---
+
+### 故障案例 3：拿 `supervisorctl status` 的退出码判"进程存不存在"，停着的服务被误判成未登记
+
+**现象**：为重建 dev 库先 `supervisorctl stop <service>`（进程变 STOPPED，配置在、组也在），随后
+`deploy.sh -t backend` 在"刷新并重启 supervisor 服务"这一步中止：`supervisor 未登记 <service>`。
+而同一时刻 `supervisorctl status <service>` 明明白白输出 `<service> STOPPED …`。更糟的是中止发生在
+JAR、`.env`、program 配置都已落盘之后，留下"包已更新、进程没起"的半套状态。
+
+**根因**：判据写成了 `if ! supervisorctl -c … status <name> >/dev/null 2>&1; then fail "未登记"`。
+supervisorctl 的退出码是**状态码**（实测 supervisor 4.2.5）：RUNNING→0、STOPPED/STARTING/BACKOFF/FATAL→3、
+名字不认识→4（输出 `<name>: ERROR (no such process)`）。于是"存在但停着"（3）与"从未登记"（4）
+被压成同一个结论。防呆本意（配置没加载就别白等 420s 健康检查）是对的，错在把两件事当同一个信号。
+
+**会咬到的三类真实场景**：① 运维先 `stop` 再部署（改库、改配置的常规动作）；② 上一次部署失败
+留下 STOPPED/BACKOFF，下一次部署被判"未登记"，而报错把人指向"核对 include 与后缀"这条错方向，
+真因是上一轮没起来——**错误信息误导排查比报错本身更贵**；③ 主机重启后 supervisord 在跑但子进程
+未自启（`autostart` 没配好），第一条部署命令即失败。远程路径同病。
+
+**反方向也有坑**：把这段防呆整个删掉也不行。program 组真没被加载时，`restart` 与兜底的 `start`
+会以 `no such process` 双双失败，`set -e` 让脚本就地结束——没有结论行、没有 `[STATUS]`，
+只留下 supervisorctl 的原始 stderr，表现为"部署突然结束"。
+
+**处理**：判**输出文本**不判码——含 `no such process` 才是没登记（附实机 `[include] files=` 与
+应写路径，当场失败）；能问到状态（含 STOPPED）一律放行给 `restart` + 健康检查；问不到 daemon
+（非 0 且无状态词，daemon 没跑/主配置读不动/ssh 不通）也当场失败并附原始输出；`restart` 后展示状态
+那行必须带 `|| true`，否则 STARTING（码 3）会静默中止整个部署。
+
+**结论**：见第三节第 5 条。参照实现是 `deploy.sh` 的 `require_supervisor_group()`。
 
 ---
 

@@ -266,6 +266,14 @@ supervisor_include_text() {
     fi
 }
 
+# 主机 [include] files= 的实测值：报错时给人一个可对照的事实，不让人去猜
+supervisor_include_files() {
+    local patterns
+    # awk 不提前 exit：管道里读 stdin 的命令提前收到退出会拿 SIGPIPE，pipefail 下静默中止部署
+    patterns="$(supervisor_include_text | awk '/^[[:space:]]*files[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); gsub(/[[:space:]]+/, " "); print }')"
+    printf '%s' "${patterns:-（读不到 $SUPERVISOR_CONF 里的 [include] files=）}"
+}
+
 # 解析主机 [include] files= 里的后缀；显式 SUPERVISOR_CONF_SUFFIX 优先，解析不到退回 apt 默认 conf
 detect_supervisor_suffix() {
     local patterns
@@ -273,8 +281,7 @@ detect_supervisor_suffix() {
         printf '%s\n' "$SUPERVISOR_CONF_SUFFIX"
         return 0
     fi
-    # awk 不提前 exit：管道里读 stdin 的命令提前收到退出会拿 SIGPIPE，pipefail 下静默中止部署
-    patterns="$(supervisor_include_text | awk '/^[[:space:]]*files[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); print }')"
+    patterns="$(supervisor_include_files)"
     # 只匹配 glob 本体（"*.conf" / "*.ini"），不能匹配裸 "conf"——include 路径里就带 conf.d
     case "$patterns" in
         *"*.conf"*) printf 'conf\n' ;;
@@ -298,6 +305,39 @@ warn_supervisor_twin() {
         log "警告: 存在另一后缀的本服务配置 $twin（本次写入的是 .$SUPERVISOR_SUFFIX）"
         log "      两者只有一份会被 supervisord 加载，另一份会误导排查；确认无用后删除：rm $twin"
     fi
+}
+
+# supervisord 是否真的加载了本服务的 program 组：**判输出文本，不拿退出码当存在性判据**。
+# supervisorctl status 的退出码是**状态码**（supervisor 4.2.5 实测）：
+#   0 ＝ RUNNING；3 ＝ 组存在但当前不在 RUNNING（STOPPED／STARTING／BACKOFF／FATAL 都算）；
+#   4 ＝ 名字不认识，输出「X: ERROR (no such process)」。
+# 用 `if ! supervisorctl status X` 判"这个进程存不存在"，会把"存在但停着"当成"没登记"：
+# 运维为重建库先 stop 再部署、上一次部署失败留下 STOPPED/BACKOFF、主机重启后子进程未自启，
+# 三种场景都会踩，而且报错把人指向"核对 include 与后缀"这条错方向，真因却是上一轮没起来。
+# 退出码在这里只当次要信号用（"连 daemon 都问不到"时它是非 0 且没有状态词），
+# 停着的进程一律放行走 restart + 健康检查。
+require_supervisor_group() { # $1=service；未登记或问不到 daemon 时 fail 退出
+    local service="$1" state="" rc=0 one_line
+    if [ -n "$REMOTE_HOST" ]; then
+        state="$(remote_exec "supervisorctl -c $SUPERVISOR_CONF status $service" 2>&1)" || rc=$?
+    else
+        state="$(supervisorctl -c "$SUPERVISOR_CONF" status "$service" 2>&1)" || rc=$?
+    fi
+    case "$state" in
+        *"no such process"*)
+            fail "$service 未被 supervisord 登记（是这台主机没加载它的 program 配置，不是启动慢）：应写的配置是 $(supervisor_program_conf "$service")，$SUPERVISOR_CONF 的 [include] files 实测为「$(supervisor_include_files)」；先核对后缀与 include 目录，再确认文件已落盘" ;;
+        *RUNNING*|*STOPPED*|*STARTING*|*BACKOFF*|*FATAL*|*EXITED*|*UNKNOWN*)
+            return 0 ;;
+    esac
+    # 没有可识别的状态行、而 supervisorctl 自己也以非 0 收场——多半是 supervisord daemon 没在跑 /
+    # 主配置读不动 / ssh 不通。当场说清楚，别让下面的 restart 与 start 双双失败后被 set -e
+    # 静默吞掉（那连 [STATUS] 行都不会打）。rc=0 但认不出状态词的（新版输出格式变化等）不在此列：
+    # 那是 supervisorctl 自认为成功，交给 restart 判，restart 与 start 都失败时同样会 fail 出结论。
+    if [ "$rc" -ne 0 ]; then
+        one_line="$(printf '%s' "$state" | tr '\n' ' ' | cut -c1-200)"
+        fail "问不到 $service 的 supervisor 状态（supervisord daemon 没在跑，或 $SUPERVISOR_CONF 读不动，rc=$rc）：supervisorctl status 输出「${one_line:-（空输出）}」"
+    fi
+    return 0
 }
 
 supervisor_conf_body() {
@@ -407,8 +447,9 @@ deploy_service_jar() {
 restart_service() {
     local service="$1"
     log "重启 supervisor 服务: $service"
+    require_supervisor_group "$service"
     if ! supervisorctl -c "$SUPERVISOR_CONF" restart "$service"; then
-        supervisorctl -c "$SUPERVISOR_CONF" start "$service"
+        supervisorctl -c "$SUPERVISOR_CONF" start "$service" || fail "$service restart 与 start 都失败，见上方 supervisorctl 输出与 $LOG_ROOT/$service/supervisord.log"
     fi
 }
 
@@ -458,8 +499,10 @@ remote_restart_service() {
     local service="$1"
     log "远程重启 supervisor 服务: $service"
     remote_exec "supervisorctl -c $SUPERVISOR_CONF reread && supervisorctl -c $SUPERVISOR_CONF update"
+    require_supervisor_group "$service"
     if ! remote_exec "supervisorctl -c $SUPERVISOR_CONF restart $service"; then
-        remote_exec "supervisorctl -c $SUPERVISOR_CONF start $service"
+        remote_exec "supervisorctl -c $SUPERVISOR_CONF start $service" \
+            || fail "远程 $REMOTE_HOST 上 $service restart 与 start 都失败，见上方 supervisorctl 输出与 $LOG_ROOT/$service/supervisord.log"
     fi
 }
 
@@ -1230,7 +1273,9 @@ if [ "$DEPLOY_BACKEND" = true ]; then
         for service in "${SELECTED_SERVICES[@]}"; do
             echo
             restart_service "$service"
-            supervisorctl -c "$SUPERVISOR_CONF" status "$service"
+            # status 的退出码是状态码：STOPPED/STARTING/BACKOFF 返回 3，裸调用会让 set -e
+            # 在健康检查之前静默中止整个部署（连 [STATUS] 行都打不出来），这里只是给人看一眼状态
+            supervisorctl -c "$SUPERVISOR_CONF" status "$service" || true
             wait_service_ready "$service"
         done
     fi

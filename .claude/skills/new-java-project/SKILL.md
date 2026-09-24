@@ -496,6 +496,11 @@ curl -s http://<本机IP>:<NGINX_PORT>/<SERVICE_NAME>/api/health         # 经 n
   后缀由脚本现问目标主机 `$SUPERVISOR_CONF` 的 `[include] files=` 模式决定（apt 默认 `*.conf`，
   不少在跑的主机改成只 `*.ini`）：写错后缀的文件 supervisord 不加载、也不报错，属于
   "改了配置不生效"那类静默故障；发现另一后缀同名文件会告警并给出删除命令。
+  重启前的存在性检查（`require_supervisor_group()`）**判 `supervisorctl status` 的输出文本，不判退出码**
+  ——退出码是状态码（RUNNING=0／STOPPED|STARTING|BACKOFF=3／未登记=4），拿它判"存不存在"会把
+  "先 stop 再部署"的正常操作误判成"未登记"；同时它也不放任静默：问不到 daemon、`restart` 与
+  `start` 双双失败，都会 `fail` 出带 `[STATUS]` 的结论行（见 specs/deployment-common.md 第三节第 5 条
+  与故障案例 3）。
 - Spring 环境（dev/test/prod）通过 env 文件中的 `SPRING_PROFILES_ACTIVE` 传递给 JVM，
   supervisord 命令行不写死 `--spring.profiles.active`。
 - 健康检查端点由生成的 `RootController.java` 提供，路径必须是 `/api/<SERVICE_NAME>/health`

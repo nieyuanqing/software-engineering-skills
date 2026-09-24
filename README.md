@@ -173,6 +173,7 @@ software-engineering-skills/
 - supervisord 配置在部署时 inline 生成，Spring 环境通过 `.env` 中的 `SPRING_PROFILES_ACTIVE` 传递
 - 多前端支持（`WEB_APPS` + 四张表，构建时传 `NEXT_BASE_PATH`，按 `--env` 覆盖 `runtime-config.<env>.js`）
 - 部署前比对三套 `.env` 键集，缺键打警告（缺键=该环境静默缺配置）
+- 重启服务前确认 program 组已被 supervisord 加载：判 `supervisorctl status` 的输出文本而非退出码（退出码是状态码，STOPPED/STARTING 返回 3，误用会把"停着的服务"判成"未登记"并指向错方向）；问不到 daemon、restart 与 start 双双失败等路径一律以 `[STATUS] ERROR` 收场，不留"脚本突然结束"的静默中止
 - mvn/gradle/npm 构建日志静默落盘 `./runtime/`，涉及服务/库/主机的日志一律点名
 - Phase N/M 阶段日志，`[STATUS] OK/ERROR` 机器可读输出，420s 健康检查
 - 部署目录可覆盖：`APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF_DIR` 等
