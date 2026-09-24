@@ -1,7 +1,7 @@
 # sql/ 数据库备份目录
 
-只放一样东西：**数据库备份导出文件**。结构变更脚本不放这里，放
-`deploy-conf/db/migrations/<服务>/`（约定与执行方式见那份目录的 `README.md`）。
+只放一样东西：**数据库备份导出文件**。结构变更脚本不放这里，放本服务 Maven 模块的
+`src/main/resources/db/migration/`（Flyway 随 jar 打包并在应用启动时迁移，见 `specs/deployment.md` 第七节）。
 
 | 内容 | 命名建议 | 版本控制 |
 |---|---|---|

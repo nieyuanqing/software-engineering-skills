@@ -1,41 +1,47 @@
 #!/usr/bin/env bash
-# 数据库 SQL 执行器（本工程唯一连库入口）：把「一段 SQL 打到某个环境的库」收成一个脚本，
+# 数据库 SQL 执行器（手工连库入口）：把「一段 SQL 打到某个环境的库」收成一个脚本，
 # 避免在对话里贴多层嵌套引号的一行命令（终端折行或换 shell 就会把引号吃掉，
 # 轻则 psql 参数解析失败，重则连错库）。
 #
-# 与 scripts/db-migrate.sh 的分工（两层各管一件事，功能不重复）：
-#   本脚本＝**执行层**：只认「环境 + 服务 + 一段 SQL」，负责取连接参数、拼 ssh/psql、默认只读、
-#            `--apply` 才放开写、prod 写默认拒跑。**不认迁移文件、不做任何判定、不写留痕。**
-#   db-migrate.sh＝**迁移层**：只认 `V<n>__*.sql` 与文件头 `-- @probe:`，负责判「已应用／待应用／需人工」、
-#            写 deploy-conf/db/migrate-records/<env>.md 留痕、按版本序批量升级；
-#            **它自己不连库**——所有真问库与真写库都回调本脚本（ssh + PGPASSWORD + psql 的传输只有一处实现）。
+# 与 Flyway 的分工（结构变更只有一条路径，本脚本不碰它）：
+#   **Flyway＝结构变更**：迁移脚本写在 src/backend/<服务>/src/main/resources/db/migration/
+#     下的 `V<n>__<主题>.sql`，随 jar 打包，应用启动时自动迁移到最新版本；跑到哪一版由目标库自己的
+#     `flyway_schema_history` 记账。部署脚本的健康检查负责兜底：迁移失败→应用起不来→部署判失败中止。
+#   **本脚本＝手工执行层**：临时查询、数据订正、重建索引、排障时手工跑一段 SQL。
+#     它不认 V 文件、不做版本判定、不写留痕——那些是 Flyway 的职责，这里重复一遍只会两头漂移。
+#   两者的边界：改**结构**（表/列/索引/约束）→ 提交一个 V 文件；改**数据**（订正、回补、清理）
+#     → 走本脚本（且必须先只读核对影响行数，再加 --apply）。
 #
 # 默认只读：连上后强制 default_transaction_read_only=on，任何写操作都会被数据库拒掉。
 # 写操作必须显式 --apply，且目标为远端时还要显式 -r <host>（本脚本不登记任何目标机）。
 # 本脚本**没有查询模式也没有只读开关**：读是默认（不加 --apply 时数据库侧强制 read_only），
 #   写只有 --apply 一条显式路径——一个轴上一个参数，不做"再声明一遍只读"的重复开关。
 # 输出**只有一种**：psql 原始的对齐结果表（表头 + 数据行 + `(N rows)` 收尾），进度日志走 stderr。
-#   不提供第二种排版开关：机器调用方（db-migrate.sh）自己剥掉表头、分隔线、行数收尾并 trim 两端空白。
+#   不提供第二种排版开关：需要机器解析时自己剥掉表头、分隔线、行数收尾并 trim 两端空白。
 # 凭据一律从目标环境的 .env 现取，只在进程环境变量里存在，不落盘、不回显。
 #
 # 用法:
 #   bash scripts/db-sql.sh -e dev  -f path/to.sql                # 本机 dev 库，只读
 #   bash scripts/db-sql.sh -e test -r <user@host> -f path/to.sql # test 库，只读
-#   bash scripts/db-sql.sh -e test -r <user@host> --apply -f ... # test 库，允许写（迁移文件也走这条）
+#   bash scripts/db-sql.sh -e test -r <user@host> --apply -f ... # test 库，允许写（数据订正）
 #   echo "select 1" | bash scripts/db-sql.sh -e test -r <user@host>   # SQL 走标准输入
+#   # 查这台库已经迁移到 Flyway 的哪一版（只读）：
+#   echo "select installed_rank,version,description,success from flyway_schema_history order by 1" \
+#       | bash scripts/db-sql.sh -e dev -s <SERVICE_NAME>
 #
 # 选项:
 #   -e, --env <dev|test|prod>   目标环境（默认 dev）。test/prod 的库不在本机，必须显式 -r
 #   -r, --remote <user@host>    唯一能指向远端的参数；SQL 经 ssh 标准输入流式执行，目标机不落任何文件
 #   -s, --service <名>          取哪份 .env 的连接参数（默认脚本顶部 SERVICES 表第一项）
 #   -f, --file <路径|->         SQL 文件；不给或给 - 则从标准输入读
-#       --apply                 放开写操作（缺它则数据库侧强制只读，DDL 直接被数据库拒绝）
-#       --prod-approved         prod 写操作的放行位：**只给已持双确认锁的调用方**（db-migrate 仅在
-#                               同时拿到 --yes 与 --confirm-prod 时才传）；人工直接跑本脚本永远不该加它
+#       --apply                 放开写操作（缺它则数据库侧强制只读，DDL/UPDATE 直接被数据库拒绝）
+#       --prod-approved         prod 写操作的放行位：**人工直连 prod 改数据时要显式加它**，作用是在
+#                               `-e prod` 之外再确认一次（应用启动时的 Flyway 迁移不经本脚本，
+#                               不需要也不该由人来放行）
 #   -h, --help                  显示本用法
 set -euo pipefail
 
-# 在册微服务（必须与 scripts/deploy.sh、scripts/db-migrate.sh 顶部的服务表一致）
+# 在册微服务（必须与 scripts/deploy.sh 顶部服务表的 SERVICES 一致）
 SERVICES=("<SERVICE_NAME>")
 
 ENVIRONMENT="dev"
@@ -86,11 +92,10 @@ case "$ENVIRONMENT" in
     *) fail "未知环境: $ENVIRONMENT（只支持 dev|test|prod）" ;;
 esac
 
-# prod 写：默认一律拒跑（人工待办的 prod 项按项目约定挂起）。唯一放行路径是调用方已持双确认锁
-# 并显式传 --prod-approved；那两把锁在 db-migrate.sh 里（--yes 与 --confirm-prod 同时给出才转过来），
-# 确认判定只在那一处，本脚本不重复一套 prod 确认逻辑。
+# prod 手工写：默认一律拒跑。结构变更由应用启动时的 Flyway 迁移完成，人来 prod 改库只有
+# 数据订正/清理这一类，必须显式 --prod-approved 表态（与 `-e prod` 构成两把独立的锁）。
 if [ "$ENVIRONMENT" = "prod" ] && [ "$APPLY" = 1 ] && [ "$PROD_APPROVED" != 1 ]; then
-    fail "prod 写操作不经本脚本代跑（人工待办 prod 项一律挂起）；要只读去掉 --apply 即可。批量升级请走 scripts/db-migrate.sh -e prod -r <host> --yes --confirm-prod"
+    fail "prod 写操作需再加 --prod-approved 显式放行（改结构请提交 Flyway 迁移脚本随部署执行，不要手工 ALTER prod schema）；要只读去掉 --apply 即可"
 fi
 
 if [ -n "$SQL_FILE" ] && [ "$SQL_FILE" != "-" ]; then

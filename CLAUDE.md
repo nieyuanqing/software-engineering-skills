@@ -7,9 +7,9 @@
 - **共享副本同步规则**：以下文件存在多份副本，修改任一份必须同步其余副本，并用 `md5sum` 验证一致：
   - `templates/scripts/deploy.sh`、`templates/scripts/apply-ssl.sh`：new-deploy 与 new-java-project 各一份
   - `specs/deployment-common.md`：new-java-project 与 new-nginx-conf 各一份
-  - 反例（**只有一份，不要往别的 skill 复制**）：`new-java-project/templates/scripts/db-migrate.sh`
-    与 `db-sql.sh` —— 数据库的迁移层与执行层只随完整部署配置生成，`/new-deploy` 不生成它们；
-    两份必须同时生成（迁移层自己不连库，缺执行层就没有连库路径），但只有一份归 new-java-project。
+  - 反例（**只有一份，不要往别的 skill 复制**）：`new-java-project/templates/scripts/db-sql.sh` ——
+    手工连库入口只随完整部署配置生成，`/new-deploy` 不生成它。结构变更本身不走它：由 Flyway
+    在应用启动时执行 `src/main/resources/db/migration/V*.sql`，所以仓库里没有第二个迁移脚本。
 - 修改任何模板文件后，检查对应 SKILL.md 的说明是否仍然准确，保持两者同步。
 - 任何改动不得破坏安装闭环：`git clone` 仓库 → 复制 `.claude/skills/<name>/` → 删除克隆，安装后即可完整使用。
 - 每次修改后，需要输出本次修改的功能清单，列出改动涉及的模块/文件及对应功能点。

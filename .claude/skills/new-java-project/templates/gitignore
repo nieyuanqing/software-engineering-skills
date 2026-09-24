@@ -39,11 +39,9 @@ deploy-conf/nginx/cert/*.key
 *.db
 # sql/ 只放数据库备份导出（pg_dump -Fc 产物），不入库
 sql/backup/
-# 结构迁移脚本＝结构定义，与代码同版本演进 ⇒ 必须入库（覆盖上面的 *.sql；
+# Flyway 迁移脚本＝结构定义，随 jar 打包、与代码同版本演进 ⇒ 必须入库（覆盖上面的 *.sql；
 # 若哪天把某个上级目录整体排除了，git 就无法再包含里面的文件，放开顺序不能乱挪）
-!deploy-conf/db/migrations/**/*.sql
-# 迁移运行留痕是本机"每次问答"的历史，不是结构定义 ⇒ 不入库
-deploy-conf/db/migrate-records/
+!src/backend/**/src/main/resources/db/migration/*.sql
 
 # ── 前端（HAS_WEB=true 时适用）──────────────────────────────
 node_modules/

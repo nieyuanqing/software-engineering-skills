@@ -99,22 +99,19 @@ software-engineering-skills/
             ├── scripts/
             │   ├── deploy.sh          部署脚本模板（共享副本①，与 new-deploy 保持一致）
             │   ├── apply-ssl.sh       SSL 证书申请脚本模板（共享副本①）
-            │   ├── db-migrate.sh      数据库迁移层模板（只做增量、不连库，回调 db-sql.sh）
-            │   └── db-sql.sh          数据库执行层模板（唯一连库处，默认只读、写只认 --apply）
-            ├── deploy-conf/
-            │   ├── db/migrations/service/
-            │   │                      迁移 SQL 目录模板（README + V0__baseline.sql 占位，入库；
-            │   │                          migrate-records/ 留痕不入库，运行时自动创建）
-            │   └── nginx/
-            │       └── service.{dev,test,prod}.conf  站点配置模板三套（按服务名渲染，扁平放在
+            │   └── db-sql.sh          手工连库入口模板（默认只读、写要 --apply；只做查询与数据订正，
+            │                          不改结构——结构归 Flyway）
+            ├── deploy-conf/nginx/
+            │   └── service.{dev,test,prod}.conf  站点配置模板三套（按服务名渲染，扁平放在
             │                          deploy-conf/nginx/ 下，与主机级 nginx.conf 同目录）
             ├── sql/README.md          sql/ 目录约定说明（只放数据库备份导出，不入库）
             └── src/backend/service/
                 ├── .env / .env.test / .env.prod   环境变量模板三套（键集强制对齐，含
                 │                          SPRING_PROFILES_ACTIVE/SERVER_PORT/DB_*，全部不入库）
                 └── src/main/resources/
-                    ├── application.yml    公共配置（端口/地址、时区、上传上限、JPA、Flyway 默认关、
-                    │                      Actuator、Swagger 开关，敏感项一律 ${VAR:} 空默认）
+                    ├── application.yml    公共配置（端口/地址、时区、上传上限、JPA validate、
+                    │                      Flyway 自动迁移、Actuator、Swagger 开关，敏感项一律 ${VAR:} 空默认）
+                    ├── db/migration/.gitkeep   Flyway 迁移脚本目录（V<n>__<主题>.sql 写这里，入库、随 jar 打包）
                     ├── application-dev.yml    dev profile（数据源、show-sql=true、DEBUG）
                     ├── application-test.yml   test profile（数据源、INFO）
                     └── application-prod.yml   prod profile（数据源、WARN）
@@ -154,11 +151,10 @@ software-engineering-skills/
 |---|---|
 | `scripts/deploy.sh` | 部署脚本（见下方"deploy.sh 能力"） |
 | `scripts/apply-ssl.sh` | SSL 证书申请（Let's Encrypt + acme.sh，HTTP-01 webroot 验证） |
-| `scripts/db-migrate.sh` | 数据库**迁移层**：只做增量，认 `V<n>__*.sql` + 文件头 `-- @probe:`，现问目标库判六态，按版本序执行，本地写留痕（见下方"数据库两层"） |
-| `scripts/db-sql.sh` | 数据库**执行层**：唯一连库处，取连接参数/拼 ssh/起 psql；默认只读，写只认 `--apply` |
-| `deploy-conf/db/migrations/<name>/` | 迁移 SQL 目录（`README.md` 约定 + `V0__baseline.sql` 占位）；SQL **入库**，`../migrate-records/` 留痕不入库 |
+| `scripts/db-sql.sh` | 手工连库入口：取连接参数/拼 ssh/起 psql；默认只读，写要 `--apply`，prod 手工写再加 `--prod-approved`。**只做查询与数据订正，不改结构** |
+| `src/backend/<name>/src/main/resources/db/migration/` | Flyway 迁移脚本目录（空目录用 `.gitkeep` 占位）；`V<n>__<主题>.sql` 写这里，**入库**并随 jar 打包，应用启动时自动前滚 |
 | `.gitignore` | 标准忽略清单（含 env 环境变量文件与 SQL/数据库文件；`sql/backup/` 与留痕忽略、迁移 SQL 入库例外；已存在时仅合并缺失条目） |
-| `sql/README.md` + `sql/backup/` | 数据库备份目录（备份导出文件不入库；结构变更脚本改放 `deploy-conf/db/migrations/`） |
+| `sql/README.md` + `sql/backup/` | 数据库备份目录（备份导出文件不入库；结构变更脚本放 `db/migration/`） |
 | `deploy-conf/nginx/<name>.dev.conf` | nginx 站点配置 — dev 环境（HTTP，无域名；含 CORS 白名单、令牌脱敏日志、upstream、ACME 入口） |
 | `deploy-conf/nginx/<name>.test.conf` | nginx 站点配置 — test 环境（HTTPS，绑定测试域名） |
 | `deploy-conf/nginx/<name>.prod.conf` | nginx 站点配置 — prod 环境（HTTPS，绑定生产域名） |
@@ -181,22 +177,24 @@ software-engineering-skills/
 - Phase N/M 阶段日志，`[STATUS] OK/ERROR` 机器可读输出，420s 健康检查
 - 部署目录可覆盖：`APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF_DIR` 等
 
-**数据库两层**（`db-migrate.sh` ＋ `db-sql.sh`，一次生成分不开的一对）：
-- **迁移层** `db-migrate.sh`：只认 `deploy-conf/db/migrations/<服务>/V<n>__*.sql` 与文件头 `-- @probe:`，
-  现问目标库判六态（已应用／待应用／需人工／重复执行／未标注／探测出错），按版本号升序只补增量；
-  **不建记账表**，也**永不 DROP／重建／从备份恢复**（那属 `deploy.sh --target db`）
-- **执行层** `db-sql.sh`：唯一连库处（取连接参数、拼 ssh、起 psql 只这一处实现）；默认只读
-  （数据库侧强制 `default_transaction_read_only=on`），写只认显式 `--apply`；prod 写默认拒跑，
-  只接受迁移层双确认后转来的 `--prod-approved`
-- 远端只认显式 `-r <user@host>`：脚本内不登记目标机，缺 `-r` 时查询走**离线答复**（照录本地留痕
-  并标明快照时刻），升级在连库前直接拒绝 —— 免得照本机 `.env.test` 的 `127.0.0.1` 连到 dev 库出假绿
-- 护栏：`-q` 全程只读（执行函数带"查询模式不得执行"的自我保护）、远端写必须 `--yes`、
-  prod 必须 `--yes` + `--confirm-prod`、`需人工／未标注／探测出错` 三类永不自动执行
-- 留痕：每次真问过库往 `deploy-conf/db/migrate-records/<env>.md` 追加一节（命令、结论、
-  逐服务库身份指纹、判定表、待应用与本次执行清单），**只写本地、目标机上不留任何文件、凭据不写入**
-- 报告与留痕同构、按显示列宽排版（中文表头不错位），`>>` 标出待应用，结尾固定一段"本次运行总结"
-  给出**与本次范围一致**的下一步命令（带 `-r`/`-s`/`--only`，照着敲不会意外扩大执行面）
-- 没有 `--dry-run`（要看清单用 `-q`，两份实现只会互相漂移）、没有 `--apply`（那是执行层的参数）
+**数据库管理（Flyway 自动迁移 + `db-sql.sh` 手工入口）**：
+- **结构变更只有一条路径**：`src/main/resources/db/migration/V<n>__<主题>.sql` 随 jar 打包，
+  应用启动时 Flyway 自动前滚到最新版本，跑到哪一版记在目标库自己的 `flyway_schema_history` 里；
+  Hibernate `ddl-auto` 固定 `validate`（只校验不建表），不允许第二套迁移脚本并存
+- **迁移失败就是部署失败**：Flyway 报错 → 应用起不来 → `deploy.sh` 的 420s 健康检查拿不到 200 →
+  本次部署判失败并以非零码中止。所以 prod 也自动迁移 —— 把结构变更绑在"部署"这个受控动作上，
+  比"人记得去跑一次"可靠，也不存在"代码上了、迁移忘跑"
+- **接管已有结构的库**：`baseline-on-migrate: true` + `baseline-version: 0`（非空库没有
+  `flyway_schema_history` 时先补基线再往下迁移；baseline 记 0 版是为了不让 `V1__` 被当成基线之前跳过）
+- **`db-sql.sh` 只做 Flyway 之外的手工活**（临时查询、数据订正、排障）：默认只读
+  （数据库侧强制 `default_transaction_read_only=on`），写要显式 `--apply`，prod 手工写还要
+  `--prod-approved`；改结构不要走它 —— 手工 `ALTER` 会让库跑在 Flyway 记账之外
+- 远端只认显式 `-r <user@host>`，脚本内不登记目标机；缺 `-r` 时 test/prod 直接拒
+  （本机 `.env.test` 里的 `127.0.0.1` 指的是被部署过去的那台机自己，照它连到的是 dev 库 —— 假绿）
+- 凭据从目标机 `.env` 现取，只进那一次进程的环境变量，不落盘、不回显；SQL 经 ssh 标准输入流式执行，
+  目标机上不留任何文件；日志走 stderr，stdout 只有 psql 结果表
+- **回滚代码不等于回滚结构**：Flyway 只前滚，要退结构就再提交一个 `V<n+1>__revert_*.sql`，
+  所以迁移脚本里不做不可逆的数据销毁
 
 **所有产物遵循的通用规范**（见 `specs/deployment-common.md`）：
 - 目录约定：`/opt/soft/apps/<name>/`、`/data/logs/apps/<name>/`
@@ -389,8 +387,7 @@ software-engineering-skills/
 
 ### 人工待办
 1. @运维 部署后重启 supervisor 服务 <name>（上线时执行）
-2. @DBA 在 test 机执行 deploy-conf/db/migrations/<name>/V7__xxx.sql（部署前：
-   `bash scripts/db-migrate.sh -e test -r <user@host> --yes`）
+2. @DBA 在 test 机核对回补影响行数后放开写：`bash scripts/db-sql.sh -e test -r <user@host> --apply -f fix.sql`
 （无人工介入项时本块只写一行：1. 无）
 ```
 

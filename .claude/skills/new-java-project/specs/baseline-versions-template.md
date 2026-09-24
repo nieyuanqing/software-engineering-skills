@@ -21,9 +21,9 @@
 | Spring Boot | ≥ 3.x | 应用框架，对外 API 层、依赖注入、配置管理的基础 |
 | Spring Data JPA | ≥ 3.x | 数据访问层，配合 PostgreSQL 使用 |
 | Spring Boot Actuator | ≥ 3.x | 依赖连通性深检走默认 `/actuator/health`（`show-details=never`，只对本机）；规范要求的健康检查端点 `/api/<SERVICE_NAME>/health` 由 `config/RootController.java` 提供，不用 `management.endpoints.web.base-path` 改写 Actuator 路径；对外只暴露 `health,info` |
-| Flyway | 最新稳定版 | **默认不启用**（`spring.flyway.enabled: ${FLYWAY_ENABLED:false}`）：schema 由
-  `deploy-conf/db/migrations/<服务>/V<n>__*.sql` + `scripts/db-migrate.sh` 增量管理，两套记账机制不并行。
-  依赖与开关位留着，供工程自选改用 Flyway；无论哪条路径，都禁止用 Hibernate 自动建表替代 |
+| Flyway | 最新稳定版 | **schema 迁移的唯一机制**：脚本放 `src/main/resources/db/migration/V<n>__*.sql`，
+  随 jar 打包、应用启动时自动迁移（`spring.flyway.enabled: ${FLYWAY_ENABLED:true}`），版本记账在目标库的
+  `flyway_schema_history`。禁止用 Hibernate 自动建表替代（`ddl-auto` 只允许 `validate`）。\n  **必须在 pom 显式声明** `org.flywaydb:flyway-core`（PostgreSQL 另加 `flyway-database-postgresql`）：\n  starter-data-jpa 不带 Flyway，缺依赖时 `spring.flyway.*` 被静默忽略、一次迁移都不跑 |
 | Maven | 最新稳定版 | 依赖与构建管理 |
 
 > 具体次版本号变化较快，以父 POM 中锁定的实际版本为准，本表仅约束下限。
@@ -38,9 +38,11 @@
 
 **约束**：
 - 数据库名、角色名与服务名保持一致：`<SERVICE_NAME>` / `<SERVICE_NAME>`
-- Schema 变更一律写成 `deploy-conf/db/migrations/<服务>/V<n>__<主题>.sql`，由 `scripts/db-migrate.sh`
-  现问目标库增量执行（文件头 `-- @probe:` 是唯一的"跑过没有"判据，不建记账表）；
-  禁止手工建表，也禁止 Hibernate `ddl-auto=create/update`（`validate` 是运行前置检查，不是建表手段）
+- Schema 变更一律写成 `src/main/resources/db/migration/V<n>__<主题>.sql`，由 Flyway 在应用启动时迁移，
+  进度以目标库的 `flyway_schema_history` 为唯一记账；已应用过的脚本不得改动（Flyway 校验会拒绝启动），
+  要修就新开一个 V 文件；禁止手工建表，也禁止 Hibernate `ddl-auto=create/update`
+  （`validate` 是运行前置检查，不是建表手段）
+- 临时查询与数据订正走 `scripts/db-sql.sh`（默认只读、写要 `--apply`），它不承担结构变更
 - 三套环境变量文件 `src/backend/<SERVICE_NAME>/.env`、`.env.test`、`.env.prod` 键集必须一致，
   全部不入库；生产凭证只存在于目标机器的 `/opt/soft/apps/<SERVICE_NAME>/.env`
 

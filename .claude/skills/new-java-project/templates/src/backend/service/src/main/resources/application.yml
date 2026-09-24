@@ -29,7 +29,7 @@ spring:
 
   jpa:
     hibernate:
-      # 只校验不建表：实体与库不一致就让启动失败，不让 Hibernate 顺手改结构
+      # 只校验不建表：结构归 Flyway 管，实体与库对不上就让启动失败，不让 Hibernate 顺手改结构
       ddl-auto: validate
     show-sql: false
     open-in-view: false
@@ -38,13 +38,18 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: false
 
-  # schema 变更只有一条路径：deploy-conf/db/migrations/<服务>/V<n>__*.sql + scripts/db-migrate.sh
-  # （现问目标库判「已应用／待应用」，不建记账表；用法见该目录 README.md）。
-  # Flyway 依赖与开关位留着但默认关：两套机制同时开＝两条记账路径，同一个变更会有两个互相矛盾的答案。
-  # 要改由 Flyway 接管，先把迁移脚本放进 locations 并对已有库做 baseline，再把这里的默认值翻成 true。
+  # schema 变更只有一条路径：Flyway。迁移脚本 = 本模块 src/main/resources/db/migration/V<n>__<主题>.sql，
+  # 随 jar 打包，应用启动时自动迁移到最新版本，跑到哪一版记在目标库自己的 flyway_schema_history 里。
+  # 迁移失败 → 应用起不来 → scripts/deploy.sh 的健康检查判本次部署失败并中止，
+  # 不会带着半套结构继续接流量（结构变更因此与代码是同一次原子落地，不存在"忘跑迁移"）。
   flyway:
-    enabled: ${FLYWAY_ENABLED:false}
+    enabled: ${FLYWAY_ENABLED:true}
     locations: classpath:db/migration
+    # 用 Flyway 接管一个已有结构的库：非空且没有 flyway_schema_history 时，默认行为是直接报错，
+    # 这一位让它先补一条 baseline 记录再往下迁移
+    baseline-on-migrate: true
+    # baseline 记成 0 版，好让库里已有的 V1__ 脚本照常参与判定；设成 1（Flyway 默认）会连 V1 一起跳过
+    baseline-version: 0
 
 management:
   endpoints:

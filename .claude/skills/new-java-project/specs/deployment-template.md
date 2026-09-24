@@ -4,8 +4,8 @@
 > **主机层面、跨项目通用的规则（目录/命名约定、端口登记总表、共享 supervisord/nginx 的操作规范、
 > 故障案例）都在 [共享主机部署通用规范](./deployment-common.md) 里，本文档不重复，只写
 > <SERVICE_NAME> 自己的部分**。执行任何部署操作前，先确认已经读过那份通用规范。
-> 适用范围：`scripts/deploy.sh`（含 `scripts/apply-ssl.sh`）、`scripts/db-migrate.sh` 与
-> `scripts/db-sql.sh`（数据库迁移两层）等部署脚本，以及 `deploy-conf/` 下的部署配置。
+> 适用范围：`scripts/deploy.sh`（含 `scripts/apply-ssl.sh`）、`scripts/db-sql.sh`（手工连库入口）
+> 等部署脚本，`deploy-conf/` 下的部署配置，以及 `src/main/resources/db/migration/` 下的 Flyway 迁移脚本。
 > 生成日期：<CREATE_DATE>
 
 ---
@@ -218,57 +218,76 @@ bash scripts/deploy.sh --target backend --db --remote root@<HOST>  # 部代码 +
 - 生产凭证只存在于目标机器的 `/opt/soft/apps/<SERVICE_NAME>/.env`，不进代码库
 - dev/test/prod 三台机器各自独立的 PostgreSQL 实例，互不共享数据
 
-### 7.1 结构变更只有一条路径：文件式增量迁移
+### 7.1 结构变更只有一条路径：Flyway
 
 | 项 | 约定 |
 |---|---|
-| 结构定义 | `deploy-conf/db/migrations/<服务>/V<n>__<主题>.sql`，**入库**（与代码同版本演进） |
-| 执行入口 | `scripts/db-migrate.sh`（迁移层：判已应用/待应用、按版本序增量执行、写留痕） |
-| 连库执行 | `scripts/db-sql.sh`（执行层：取连接参数、拼 ssh、起 psql，唯一连库处） |
-| 应用侧 | `spring.flyway.enabled: ${FLYWAY_ENABLED:false}`（默认关）、`jpa.hibernate.ddl-auto: validate`（只校验不建表） |
-| 运行留痕 | `deploy-conf/db/migrate-records/<env>.md`，**不入库**（本机每次问答的历史，不是结构定义） |
+| 迁移脚本 | `src/backend/<服务>/src/main/resources/db/migration/V<n>__<主题>.sql`，随 jar 打包、**入库** |
+| 执行时机 | 应用启动时自动迁移到最新版本（dev/test/prod 三套都一样） |
+| 记账 | 目标库自己的 `flyway_schema_history` 表（Flyway 自动建、自动写） |
+| 应用侧 | `spring.flyway.enabled: ${FLYWAY_ENABLED:true}`、`jpa.hibernate.ddl-auto: validate`（只校验不建表） |
+| 手工连库 | `scripts/db-sql.sh`：临时查询、数据订正、排障 —— **不改结构**（见 7.3） |
+| Maven 依赖 | 工程 `pom.xml` 必须显式含 `org.flywaydb:flyway-core`（PostgreSQL 另加 `flyway-database-postgresql`）；`spring-boot-starter-data-jpa` 不带 Flyway，缺依赖时 `spring.flyway.*` 整段被静默忽略、一次迁移都不跑 |
 
-**已应用与否不建记账表**：每个迁移文件头部写 `-- @probe:` 探测语句，脚本拿它现问目标库，答出
-「已应用／待应用／需人工／重复执行／未标注／探测出错」六态。约定与理由见
-`deploy-conf/db/migrations/<服务>/README.md`。
+**迁移失败怎么暴露**：Flyway 跑挂 → 应用启动失败 → `deploy.sh` 的健康检查（420s 内轮询
+`/api/<SERVICE_NAME>/health`）拿不到 200 → 本次部署判失败并以非零码中止。所以结构变更与代码是
+**同一次原子落地**：不存在"代码上了、迁移忘跑"，也不会带着半套结构接流量。这就是 prod 也自动迁移的
+理由 —— 把迁移挂到部署这个受控动作上，比"人记得去跑一次"可靠。
 
-**为什么 Flyway 默认关**：两套迁移机制同时开＝两条记账路径，同一个变更会有两个互相矛盾的答案
-（脚本说待应用、Flyway 说已在 `flyway_schema_history` 里）。要用 Flyway 接管，先把迁移脚本放进
-`locations` 并对已有库 baseline，再把默认值翻成 `true`——不能两套并行。
+**接管已有结构的库**：库里已有表但没有 `flyway_schema_history` 时，`baseline-on-migrate: true` 会让
+Flyway 先补一条基线记录再往下迁移；`baseline-version: 0`（Flyway 默认是 1）是为了让库里已有的
+`V1__` 脚本照常参与判定，不然 V1 会被当成"基线之前"跳过。
 
-### 7.2 常用命令
+### 7.2 新增一个结构变更
+
+1. 在本模块 `src/main/resources/db/migration/` 下新建 `V<n>__<主题>.sql`，编号接现有最大号往后，
+   **不复用、不重排**已存在的编号：`flyway_schema_history` 按版本号记账，重号会让"V7 已应用"这类
+   记录自相矛盾；改动一个已应用过的脚本会让 Flyway 校验失败并拒绝启动 —— 这是特性不是故障，
+   要修就新开一个 V 文件。
+2. SQL 写成幂等（`ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` / 带 `WHERE` 的订正），
+   三套环境执行同一份。
+3. 本地起一次应用就完成 dev 迁移；确认落到哪一版：
+
+   ```bash
+   echo "select installed_rank,version,description,installed_on,success \
+         from flyway_schema_history order by installed_rank desc limit 5" \
+     | bash scripts/db-sql.sh -e dev -s <SERVICE_NAME>
+   ```
+
+4. test/prod **没有额外步骤** —— 部署（重启进程）本身就是迁移，见第五节部署流程。
+
+### 7.3 手工 SQL 入口 `scripts/db-sql.sh`（只碰数据，不碰结构）
 
 ```bash
-bash scripts/db-migrate.sh -q                                    # 本机 dev 还差哪些增量（只读）
-bash scripts/db-migrate.sh                                       # 本机 dev 增量升级（跑前确认）
-bash scripts/db-migrate.sh -e test -r <user@host> -q             # 现问 test 库差集（只读，不需 --yes）
-bash scripts/db-migrate.sh -e test -r <user@host> --yes          # 升 test 库
-bash scripts/db-migrate.sh -e prod -r <user@host> --yes --confirm-prod    # prod 双确认
-bash scripts/db-sql.sh -e dev -s <SERVICE_NAME> --apply -f <文件>          # 手工跑单个文件 / manual 类迁移
+bash scripts/db-sql.sh -e dev  -s <SERVICE_NAME> -f check.sql                 # 只读（默认）
+bash scripts/db-sql.sh -e test -r <user@host> -s <SERVICE_NAME> -f fix.sql    # test 库只读
+bash scripts/db-sql.sh -e test -r <user@host> --apply -f fix.sql              # 放开写：数据订正
+bash scripts/db-sql.sh -e prod -r <user@host> --apply --prod-approved -f ...  # prod 手工写要两把锁
 ```
 
 硬护栏（脚本内置，不要绕过）：
 
-- `-e test|prod` 的库不在本机，**必须显式 `-r`**；不给 `-r` 时查询走离线答复（照录本地留痕）、
-  升级在连库前直接拒绝。理由：本机 `.env.test` 里的 `DB_HOST=127.0.0.1` 指的是 test 那台机自己，
-  照它连就连到 dev 库，报告与 dev 一字不差——那是假绿。
-- 远端写操作必须带 `--yes`；prod 增量执行必须 `--yes` 与 `--confirm-prod` 同时给（双确认锁只在
-  迁移层判一次，执行层认调用方转来的 `--prod-approved`）。
-- `需人工`／`未标注`／`探测出错` 三类文件永不自动执行；`-q` 全程只读（连执行函数都带一道
-  "查询模式不得执行"的自我保护）。
-- 永不 DROP、永不重建、永不从备份恢复——那是 `deploy.sh --target db` 的动作。
+- **默认只读**：连上即数据库侧强制 `default_transaction_read_only=on`，没写 `--apply` 就物理上写不进去
+- `-e test|prod` 的库不在本机，**必须显式 `-r`**，脚本内不登记任何目标机。理由：本机 `.env.test` 里的
+  `DB_HOST=127.0.0.1` 指的是 test 那台机自己，在 dev 机器上照它连到的是 dev 库
+- prod 手工写必须 `-e prod` 与 `--prod-approved` 同时给（后者是"人在场并确认"的第二把锁；
+  应用启动时的 Flyway 迁移不经本脚本，不需要人放行）
+- 凭据从目标机的 `.env` 现取，只进那一次进程的环境变量，不落盘、不回显；SQL 经 ssh 标准输入流式执行，
+  目标机上不留任何文件
 
-### 7.3 `--target db`：全量重建，不是升级
+### 7.4 `--target db`：全量重建，不是升级
 
 `--target db` 是**破坏性**操作：pg_dump 本地 dev 库 → 上传 → 远端断开连接、
 `dropdb` + `createdb` + 恢复。默认要输入 `yes` 二次确认，`-y` 跳过。
-它把远端库里比本地新的数据一起冲掉，**已明确执行过某条迁移的环境绝不要用它"补迁移"**。
+它把远端库里比本地新的数据一起冲掉，**已经 Flyway 迁移过的环境绝不要用它"补结构"** ——
+那会把远端的 `flyway_schema_history` 一起换成源库的版本，两边记账从此对不上。
 
-首次建库：
+首次建库（只需要空库 + 一个有建表权限的角色，表由 Flyway 在应用第一次启动时建出来）：
 
 ```bash
 sudo -u postgres createuser -P <DB_NAME>
 sudo -u postgres createdb -O <DB_NAME> <DB_NAME>
+bash scripts/deploy.sh            # 启动时 Flyway 建 flyway_schema_history 并跑完 db/migration/ 下所有脚本
 ```
 
 ---
@@ -280,11 +299,18 @@ supervisorctl status                                    # supervisord daemon 是
 ls src/backend/<SERVICE_NAME>/.env                      # 三份 env 是否齐、键集是否对齐
 ss -tln | grep -E ':(<NGINX_PORT>|<APP_PORT>)\b'         # 本机部署时目标端口是否空闲
 nginx -t                                                # nginx 配置当前是否健康（基线状态）
-bash scripts/db-migrate.sh -q                           # 有没有还没升的增量（只读）
+# 目标库当前落在 Flyway 的哪一版（只读，先知道起点）：
+echo 'select installed_rank,version,description,success from flyway_schema_history order by installed_rank desc limit 3' \
+  | bash scripts/db-sql.sh -e dev -s <SERVICE_NAME>
 ```
 
-**先升库、再部代码**：新代码往往依赖新列/新索引，库没跟上就让应用启动时的 `ddl-auto: validate`
-直接失败（这是它该干的活）。所以 `-q` 报出的 `待应用` 必须在部署前用 `db-migrate.sh --yes` 清零。
+**结构变更不需要"先升库"这一步**：Flyway 在应用启动时把库带到本次代码要求的版本，迁移与代码同一次
+部署落地。迁移失败会让应用起不来 → 健康检查超时 → 部署中止（不会带着半套结构接流量），此时看
+`/data/logs/apps/<SERVICE_NAME>/supervisord.log` 里的 Flyway 报错。
+
+**回滚代码不等于回滚结构**：Flyway 只做前滚，不会因为 jar 换回旧版就把表改回去。要退结构就再提交一个
+`V<n+1>__revert_*.sql` 把它改回来 —— 因此每个迁移脚本都要写成"能被下一个脚本反向修正"的形态，
+不要在迁移脚本里做不可逆的数据销毁。
 
 test/prod 额外确认（按域名命名，不是按服务名）：
 ```bash
@@ -325,10 +351,10 @@ nginx 站点配置（见通用规范第三节规则 3、4）。
 
 1. `scripts/deploy.sh` 顶部服务表：`SERVICES`、`SERVICE_PORTS`、`SERVICE_HEALTH_PATHS`、
    `SERVICE_DBS` 各追加一条（新服务用独立端口，登记到通用规范端口总表）
-2. `scripts/db-migrate.sh` 与 `scripts/db-sql.sh` 顶部的 `SERVICES` 表：与 deploy.sh 保持同一份名单
-   （三份不齐 = 迁移脚本认不出这个服务，或反过来把迁移动作指向一个不存在的服务目录）
-3. `deploy-conf/db/migrations/<新服务>/`：新服务的迁移目录（自己一套 `V<n>__*.sql` + `README.md`，
-   新库先按该 README 第〇节落 `V0` 基线）
+2. `scripts/db-sql.sh` 顶部的 `SERVICES` 表：与 deploy.sh 保持同一份名单（不齐就会出现
+   "deploy.sh 能部、db-sql.sh 说这服务不在册"的裂口）
+3. `src/backend/<新服务>/src/main/resources/db/migration/`：新服务自己的 Flyway 迁移目录
+   （独立库就独立一套 `flyway_schema_history`，两个服务的版本号互不相干）
 4. `deploy-conf/nginx/<SERVICE_NAME>.{dev,test,prod}.conf`：为新服务加 `upstream` +
    `location`（按路径前缀分流）
 5. `src/backend/<新服务>/.env{,.test,.prod}`：三份键集对齐的环境变量
@@ -336,5 +362,6 @@ nginx 站点配置（见通用规范第三节规则 3、4）。
    `WEB_APP_SOURCE` / `WEB_APP_DEPLOY` / `WEB_APP_BASE_PATH` / `WEB_APP_PROJECT_ID` 四张表，
    `basePath` 必须与 nginx 里的 location 前缀一致
 
-> 多服务共用一个站点、但各连自己的库：`db-migrate.sh` 会逐服务解析连接、逐服务报库身份指纹，
-> 两个库的 `V<n>` 号互不相干（同号只是巧合），要只升其中一个用 `--only <服务>/V<n>`。
+> 每个服务连自己的库、各自跑自己的 Flyway：部署时哪个进程起来就迁移哪个库，
+> 不需要跨服务的迁移顺序协调。
+> `db-sql.sh -s <服务>` 决定的是"用哪份 .env 的连接参数"，多服务时务必显式指定，别默认连到第一项。
