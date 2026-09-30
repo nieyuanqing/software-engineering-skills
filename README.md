@@ -24,7 +24,7 @@
 
 | Skill | 说明 |
 |:------------------------------------------------------|---|
-| [`/new‑java‑project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、nginx 站点配置、三套 .env、Spring Boot yml 与健康检查端点、specs 文档、标准 .gitignore） |
+| [`/new‑java‑project`](#new-java-project) | 为 Java/Spring Boot 工程生成完整的标准化部署配置（deploy.sh、apply-ssl.sh、手工连库 db-sql.sh、Flyway 迁移目录、nginx 站点配置、三套 .env、Spring Boot yml 与健康检查端点、specs 文档、标准 .gitignore） |
 | [`/new‑deploy`](#new-deploy) | 单独为已有工程生成或更新 `scripts/deploy.sh` 和 `scripts/apply-ssl.sh` |
 | [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/` |
 | [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本 |
@@ -41,6 +41,10 @@
 
 逐个 skill 的详细用法见下方对应章节。
 
+> **`-h` 的全局约定**（14 个 skill 一致）：`-h` 与其它参数或说明文字同时出现时**只出帮助、忽略其余参数**，
+> 且帮助必须原样打在回复正文里（斜杠命令把 SKILL.md 注入上下文不等于已展示给用户）；
+> 要"看帮助 + 同时执行"就去掉 `-h` 分两次调用。
+
 ---
 
 ## 目录结构
@@ -56,11 +60,11 @@ software-engineering-skills/
     ├── aicase/SKILL.md                拉取 aibug 近期 Bug，转化为回归测试用例（P1，AICASE 标记）
     ├── common-rules/SKILL.md          通用行为规范（九条：任务摘要（含人工待办 @角色 分派）、
     │                                  飞书卡片 2.0 单栏通知、v0 保护、禁止硬编码、commit 格式、
-    │                                  CORS、三环境对齐、API 安全）
+    │                                  CORS、三环境对齐、API 用 code 标识资源、对象级授权防 IDOR）
     ├── api-test/SKILL.md              全端扫描后端 API 生成 URL 清单，逐个验证 HTTP 200 并修复
     ├── do-test/SKILL.md               测试总驱动：API 验证（委托 api-test）+ test/cases/ 场景用例
     ├── new-test-case/SKILL.md         新增单个测试用例 TEST-CASE-{4位编号}.md 到 test/cases/
-    ├── do-security-check/SKILL.md     全维度安全检测（Semgrep + Trivy + 运行时 + 镜像）
+    ├── do-security-check/SKILL.md     全维度安全检测（Semgrep SAST + Trivy fs/repo + 运行时探测）
     ├── git-summary/SKILL.md           分支自创建点起的 commit 归并成功能清单（默认当前分支，只读）
     ├── db-compare/                    只读比对环境间 PostgreSQL 表与字段结构（字段级）
     │   ├── SKILL.md
@@ -104,10 +108,13 @@ software-engineering-skills/
             ├── deploy-conf/nginx/
             │   └── service.{dev,test,prod}.conf  站点配置模板三套（按服务名渲染，扁平放在
             │                          deploy-conf/nginx/ 下，与主机级 nginx.conf 同目录）
+            ├── gitignore              .gitignore 模板（env/证书/构建产物/备份忽略，
+            │                          Flyway 迁移 SQL 入库例外）
             ├── sql/README.md          sql/ 目录约定说明（只放数据库备份导出，不入库）
             └── src/backend/service/
                 ├── .env / .env.test / .env.prod   环境变量模板三套（键集强制对齐，含
-                │                          SPRING_PROFILES_ACTIVE/SERVER_PORT/DB_*，全部不入库）
+                │                          SPRING_PROFILES_ACTIVE/SERVER_PORT/DB_*/FLYWAY_ENABLED，
+                │                          全部不入库）
                 └── src/main/resources/
                     ├── application.yml    公共配置（端口/地址、时区、上传上限、JPA validate、
                     │                      Flyway 自动迁移、Actuator、Swagger 开关，敏感项一律 ${VAR:} 空默认）
@@ -141,44 +148,58 @@ software-engineering-skills/
   --db-port=5432 --db-name=my-service \
   --test-domain=svc.test.example.com \
   --prod-domain=svc.example.com \
-  --has-web=false                          # 全参数指定，无需交互
+  --has-web=false                          # 命令行给了的参数直接用，不再交互询问
+/new-java-project my-service \
+  --web-path=/admin --api-prefix=/v1 \
+  --base-package=com.example.myservice \
+  --jdk-version=21 --pg-version=17         # 路径前缀与基线版本也可指定
 /new-java-project -h                       # 查看帮助
 ```
+
+命令行传入的参数直接使用、不再交互询问；未给的项**一次性列出统一询问**（不一个一个问），全部确定后回显完整参数列表、确认无误再生成文件。默认值：`NGINX_PORT`/`APP_PORT`/`TEST_DOMAIN`/`PROD_DOMAIN` 无默认（必须给或交互填），`--db-port` 默认 `5432`、`--db-name` 默认与服务名相同，`--has-web` 默认 `true`（**注意 `/new-deploy` 的同一参数默认 `false`**），`--base-package` 默认 `com.<name 去掉连字符>`（用于 profile yml 的日志级别键与 `RootController` 的 package），`--jdk-version` 默认 `21`、`--pg-version` 默认 `17`（写进 `specs/baseline-versions.md`）。
+
+`--web-path`（默认 `/<name>/web`）与 `--api-prefix`（默认 `/<name>/api`）都不带结尾斜杠（传了带斜杠的值会被去掉）：这两个前缀同时决定 nginx `location` 与 `deploy.sh` 里的 `WEB_APP_BASE_PATH`，两边不一致会静态资源 404。
 
 **生成产物**
 
 | 文件 | 说明 |
 |---|---|
 | `scripts/deploy.sh` | 部署脚本（见下方"deploy.sh 能力"） |
-| `scripts/apply-ssl.sh` | SSL 证书申请（Let's Encrypt + acme.sh，HTTP-01 webroot 验证） |
+| `scripts/apply-ssl.sh` | SSL 证书申请（Let's Encrypt + acme.sh，HTTP-01 webroot 验证；证书按域名装到 `/etc/nginx/ssl/<域名>.{pem,key}`） |
 | `scripts/db-sql.sh` | 手工连库入口：取连接参数/拼 ssh/起 psql；默认只读，写要 `--apply`，prod 手工写再加 `--prod-approved`。**只做查询与数据订正，不改结构** |
 | `src/backend/<name>/src/main/resources/db/migration/` | Flyway 迁移脚本目录（空目录用 `.gitkeep` 占位）；`V<n>__<主题>.sql` 写这里，**入库**并随 jar 打包，应用启动时自动前滚 |
-| `.gitignore` | 标准忽略清单（含 env 环境变量文件与 SQL/数据库文件；`sql/backup/` 与留痕忽略、迁移 SQL 入库例外；已存在时仅合并缺失条目） |
+| `.gitignore` | 标准忽略清单（含 env 环境变量文件与 SQL/数据库文件；`sql/backup/` 忽略，Flyway 迁移 SQL 用 `!src/backend/**/src/main/resources/db/migration/*.sql` 反向放开入库；已存在时仅合并缺失条目） |
 | `sql/README.md` + `sql/backup/` | 数据库备份目录（备份导出文件不入库；结构变更脚本放 `db/migration/`） |
 | `deploy-conf/nginx/<name>.dev.conf` | nginx 站点配置 — dev 环境（HTTP，无域名；含 CORS 白名单、令牌脱敏日志、upstream、ACME 入口） |
 | `deploy-conf/nginx/<name>.test.conf` | nginx 站点配置 — test 环境（HTTPS，绑定测试域名） |
 | `deploy-conf/nginx/<name>.prod.conf` | nginx 站点配置 — prod 环境（HTTPS，绑定生产域名） |
-| `src/backend/<name>/.env` + `.env.test` + `.env.prod` | 环境变量三套（**键集强制对齐**，含 `SPRING_PROFILES_ACTIVE`/`SERVER_PORT`/`DB_*`；密码为 `changeme` 占位符，全部被 `.gitignore` 忽略） |
-| `src/backend/<name>/src/main/resources/application.yml` | Spring Boot 公共配置（端口/地址、时区、上传上限、JPA、`FLYWAY_ENABLED`（默认 false）、Actuator、`SWAGGER_ENABLED` 开关；不含任何真实凭证） |
+| `src/backend/<name>/.env` + `.env.test` + `.env.prod` | 环境变量三套（**键集强制对齐**，含 `SPRING_PROFILES_ACTIVE`/`SERVER_PORT`/`DB_*`/`FLYWAY_ENABLED`；密码为 `changeme` 占位符，全部被 `.gitignore` 忽略） |
+| `src/backend/<name>/src/main/resources/application.yml` | Spring Boot 公共配置（端口/地址、时区、上传上限、JPA `ddl-auto: validate`、Flyway `enabled: ${FLYWAY_ENABLED:true}`、Actuator、`SWAGGER_ENABLED` 开关；不含任何真实凭证） |
 | `src/backend/<name>/src/main/resources/application-{dev,test,prod}.yml` | Spring Boot profile 配置三套（数据源按 `DB_HOST/PORT/NAME` 拼装、日志级别、SQL 调试） |
 | `src/backend/<name>/src/main/java/<包>/config/RootController.java` | 健康检查端点 `/api/<name>/health` + 服务说明端点 |
 | `specs/deployment.md` | 本工程专属部署规范文档 |
 | `specs/baseline-versions.md` | 基线版本规范（JDK、PostgreSQL、Spring Boot 等） |
+
+> 本 skill **不生成 `pom.xml`**：Flyway 依赖、Spring Boot 版本等由工程自己的构建文件负责（见下方数据库管理一节）。
 
 **deploy.sh 能力**（见下方 [`/new-deploy`](#new-deploy) 节的详细说明）：
 - `-t/--target all|backend|web|ssl|android|db`（支持逗号分隔多值，如 `-t backend,web`），`-e/--env dev|test|prod`
 - `-s/--services NAME[,NAME...]` 从脚本顶部服务表选中本次部署的服务（各自独立的服务目录/日志/supervisor 进程/数据库）
 - `-r/--remote USER@HOST` 远程部署（本地构建，rsync 上传，SSH 重启）
 - `--target ssl` 安装 nginx（apt）+ SSL 证书配置
-- supervisord 配置在部署时 inline 生成，Spring 环境通过 `.env` 中的 `SPRING_PROFILES_ACTIVE` 传递
+- supervisord 配置在部署时 inline 生成，Spring 环境通过 `.env` 中的 `SPRING_PROFILES_ACTIVE` 传递；程序配置文件后缀**现问目标主机** `[include] files=` 的 glob 决定（`.conf` 或 `.ini`，可用 `SUPERVISOR_CONF_SUFFIX` 强制），写错后缀等于 supervisord 根本不加载该文件
 - 多前端支持（`WEB_APPS` + 四张表，构建时传 `NEXT_BASE_PATH`，按 `--env` 覆盖 `runtime-config.<env>.js`）
-- 部署前比对三套 `.env` 键集，缺键打警告（缺键=该环境静默缺配置）
+- 部署 `test`/`prod` 时把选中的 `.env.<环境>` 与 dev `.env`（键集基准）比对，缺键与多键都打警告（缺键=该环境静默缺配置）；`--env dev` 自身不比对
 - 重启服务前确认 program 组已被 supervisord 加载：判 `supervisorctl status` 的输出文本而非退出码（退出码是状态码，STOPPED/STARTING 返回 3，误用会把"停着的服务"判成"未登记"并指向错方向）；问不到 daemon、restart 与 start 双双失败等路径一律以 `[STATUS] ERROR` 收场，不留"脚本突然结束"的静默中止
 - mvn/gradle/npm 构建日志静默落盘 `./runtime/`，涉及服务/库/主机的日志一律点名
-- Phase N/M 阶段日志，`[STATUS] OK/ERROR` 机器可读输出，420s 健康检查
-- 部署目录可覆盖：`APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF_DIR` 等
+- Phase N/M 阶段日志，`[STATUS] OK/ERROR` 机器可读输出，健康检查每 5s 一轮、最长 420s（`SERVICE_READY_TIMEOUT` 可覆盖）
+- 部署目录可覆盖：`APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF_DIR`/`WEB_DEPLOY_PATH`/`PUBLIC_IP` 等
 
 **数据库管理（Flyway 自动迁移 + `db-sql.sh` 手工入口）**：
+- **Flyway 依赖要工程 pom 自己声明**（`org.flywaydb:flyway-core`，PostgreSQL 还要
+  `flyway-database-postgresql`）：本 skill 不生成 `pom.xml`，而 `spring-boot-starter-data-jpa`
+  **不带** Flyway。缺依赖时 `spring.flyway.*` 整段被静默忽略、一次迁移都不跑，空库上表现为启动即
+  `ddl-auto: validate` 报"表不存在"—— 生成后务必 `grep -rn 'flyway-core' pom.xml` 确认
 - **结构变更只有一条路径**：`src/main/resources/db/migration/V<n>__<主题>.sql` 随 jar 打包，
   应用启动时 Flyway 自动前滚到最新版本，跑到哪一版记在目标库自己的 `flyway_schema_history` 里；
   Hibernate `ddl-auto` 固定 `validate`（只校验不建表），不允许第二套迁移脚本并存
@@ -218,9 +239,18 @@ software-engineering-skills/
   --app-port=8080 --nginx-port=9090 \
   --test-domain=svc.test.example.com \
   --prod-domain=svc.example.com \
-  --has-web=false                          # 全参数指定，无需交互
+  --has-web=false --has-android=false      # 命令行给了的参数直接用，不再交互询问
 /new-deploy -h                             # 查看帮助
 ```
+
+`--has-web` 在**本 skill 默认 `false`**（与 `/new-java-project` 的默认 `true` 相反），它只影响
+`deploy.sh` 的默认 target（`false` 时默认 `backend` 而非 `all`）；`--has-android` 默认 `false`，
+只影响生成的 `usage()` 里是否写 android 说明。
+
+**目标工程已有 `scripts/deploy.sh` 时走更新流程，不重新逐条问参数**：从现有脚本里精确提取
+服务名、端口、域名、`HAS_WEB`/`HAS_ANDROID` 等参数 → 一次性回显（直接回车沿用，或输入要改的项）
+→ 渲染到临时文件 → `diff -u` 展示差异 → 询问 `是否用新版本覆盖？（y/N）` → 确认后覆盖并 `chmod +x`。
+不静默覆盖。
 
 **生成产物**
 
@@ -233,22 +263,25 @@ software-engineering-skills/
 
 | 能力 | 说明 |
 |---|---|
-| `--target all\|backend\|web\|ssl\|android\|db` | 部署目标（`-t` 简写）；支持逗号分隔多值（如 `-t backend,web`），按书写顺序叠加 |
-| `--services NAME[,NAME...]` | 服务名列表（`-s` 简写）：依次部署多个服务，每个对应 `src/backend/<name>`，独立的服务目录/日志/supervisor 进程；单值等价切换服务名 |
+| `--target all\|backend\|web\|ssl\|android\|db` | 部署目标（`-t` 简写，默认 `all`；`HAS_WEB=false` 时默认 `backend`）；支持逗号分隔多值（如 `-t backend,web`），按书写顺序叠加 |
+| `--services NAME[,NAME...]` | 服务名列表（`-s` 简写）：依次部署多个服务，每个对应 `src/backend/<name>`，独立的服务目录/日志/supervisor 进程/数据库；单值等价切换服务名。**只给 `-s` 不给 `-t` 视为只部后端**；`-s` 不能与 `--target web/ssl/android/db` 单独组合（直接报错） |
 | `--env dev\|test\|prod` | 目标环境（`-e` 简写），默认 `dev` |
 | `--remote USER@HOST` | 远程部署（`-r` 简写）：本地 Maven 构建，rsync 上传 JAR，SSH 远程重启 |
-| `--target ssl` | 完整 nginx 安装（apt）+ 主配置 + 站点配置；仅支持 `test\|prod` |
-| `--target db` / `--db` | pg_dump 本地库 → rsync → 远程 drop+create+restore（可叠加在 backend 后） |
+| `--target ssl` | 完整 nginx 安装（apt）+ 主配置 + 站点配置；仅支持 `test\|prod`（dev 是 HTTP 明文环境，直接报错） |
+| `--target android` | Gradle 构建 APK（工程在 `src/android/`，flavor 按环境选 `assemble{Dev,Staging,Prod}Release`，`test` 对应 staging）→ 产物落 `mobile-apps/`；不给 `--env` 时三套环境全构；签名凭据读 `src/android/.env` 的 `RELEASE_*`，缺失回退 debug 签名；没有 Gradle/SDK 时回退打源码 `tar.gz`，不算失败 |
+| `--target db` / `--db` | pg_dump 本地 dev 库 → rsync → 远程 drop+create+restore（可叠加在 backend 后）。**必须同时给 `--remote`**；破坏性操作，默认要输入 `yes` 二次确认，`-y/--yes` 跳过；源库凭据取第一个选中服务的 `src/backend/<服务>/.env` |
 | 自动 nginx 同步 | backend 部署后自动同步站点配置（`nginx -t` 通过才 reload；目标未装 nginx 则跳过） |
-| inline supervisord 配置 | 部署时写入 `/etc/supervisor/conf.d/<name>.<后缀>`，后缀现问目标主机 `[include] files=` 模式（`.conf` 或 `.ini`；写错则 supervisord 根本不加载该文件） |
-| env 文件按环境选择 | 自动选取 `.env` / `.env.test` / `.env.prod`（来自 `src/backend/<name>/`，缺失时回退 `.env` 并告警） |
+| inline supervisord 配置 | 部署时写入 `/etc/supervisor/conf.d/<name>.<后缀>`，后缀现问目标主机 `[include] files=` 模式（`.conf` 或 `.ini`，`SUPERVISOR_CONF_SUFFIX` 可强制；写错则 supervisord 根本不加载该文件），另一后缀的本服务死文件会告警并给出删除命令 |
+| supervisor 登记校验 | restart 前先确认 program 组已被 supervisord 加载，**判 `supervisorctl status` 的输出文本而非退出码**（退出码是状态码：RUNNING=0，STOPPED/STARTING/BACKOFF/FATAL=3，名字不认识=4 并输出 `no such process`）；停着的服务照样放行到 restart + 健康检查，只有"真没登记"与"问不到 daemon"才当场失败并附实机 `[include] files=` 值 |
+| env 文件按环境选择 | 自动选取 `.env` / `.env.test` / `.env.prod`（来自 `src/backend/<name>/`）；对应环境的文件不存在时**静默回退 `.env`**（只在日志"来源:"一行体现，不告警）—— test/prod 缺 env 文件等于把 dev 凭证部上去，只有回退出的文件也不存在才报错 |
 | 构建日志静默落盘 | mvn/gradle/npm 过程日志不显示在终端，写入 `./runtime/deploy-*-<时间戳>.log`（失败时打印末尾 120 行） |
-| env 键集比对 | 部署前比对 `.env` 与 `.env.<环境>` 的键集，缺键打警告（缺键=该环境静默缺配置） |
-| 路径可覆盖 | `APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF*`/`SERVICE_READY_TIMEOUT` |
-| Phase N/M 日志 | 编号阶段日志，`[STATUS] OK/ERROR` 机器可读输出行 |
-| 健康检查 | `http://127.0.0.1:<APP_PORT>/api/<name>/health`，最长等待 420s |
-| 版本化 JAR + 软链接 | `<name>-<version>.jar` + `<name>.jar` 软链接，支持手动回滚 |
-| 部署摘要 | 自动探测公网 IP，输出三套环境的访问地址和产物位置 |
+| env 键集比对 | 部署 `test`/`prod` 时把选中的 `.env.<环境>` 与 dev `.env`（键集基准）比对，缺键与多键都打警告（`--env dev` 自身不比对） |
+| 路径可覆盖 | `APP_ROOT`/`LOG_ROOT`/`NGINX_CONF_DIR`/`NGINX_SSL_DIR`/`SUPERVISOR_CONF`/`SUPERVISOR_CONF_DIR`/`SUPERVISOR_CONF_SUFFIX`/`WEB_DEPLOY_PATH`/`PUBLIC_IP`/`SERVICE_READY_TIMEOUT` |
+| Phase N/M 日志 | 编号阶段日志，`[STATUS] OK/ERROR` 机器可读输出行；日志格式 `[YYYY-MM-DD HH:MM:SS] [deploy.sh] ...` |
+| 健康检查 | `http://127.0.0.1:<APP_PORT>/api/<name>/health`，每 5s 一轮、最长等待 420s（`startsecs=10` 只防立即崩溃，就绪与否由健康检查判定） |
+| 版本化 JAR + 软链接 | `<name>-<version>.jar` + `<name>.jar` 软链接，回滚只需把软链指回旧版本；JAR 定位兼容 `<name>/target` 与多模块 `<name>/*/target` |
+| 多前端 | `WEB_APPS` + `WEB_APP_SOURCE/DEPLOY/BASE_PATH/PROJECT_ID` 四张表，构建时传 `NEXT_BASE_PATH`（须与 nginx `location` 一致），按 `--env` 覆盖 `runtime-config.<env>.js` |
+| 部署摘要 | 自动探测公网 IP（`PUBLIC_IP` 可覆盖），输出三套环境的访问地址和产物位置 |
 
 ---
 
@@ -278,12 +311,11 @@ software-engineering-skills/
 
 | 文件 | 说明 |
 |---|---|
-| `deploy-conf/nginx/nginx.conf` | 主配置（worker/事件/http 层通用参数 + include 链） |
+| `deploy-conf/nginx/nginx.conf` | 主配置（worker/事件/http 层通用参数）；include 链为 `mime.types`、`subconf/global.conf`、`subconf/log.conf`、`subconf/geo.conf`、`upstream/upstream.conf`、`vhosts/*.conf` |
 | `deploy-conf/nginx/mime.types` | 标准 MIME 类型表 |
 | `deploy-conf/nginx/subconf/log.conf` | 标准公参访问日志格式（request_id/XFF/请求细节/设备 id/userid 请求头，Token/Authorization 经 map 脱敏） |
-| `deploy-conf/nginx/subconf/ssl.conf` | 通用 SSL 参数（ciphers/协议/session 缓存），证书路径为占位符 `<DOMAIN>` |
-| `deploy-conf/nginx/subconf/cross_domain.conf` | 通用 CORS 片段 |
-| `deploy-conf/nginx/subconf/{global,geo,error_pages}.conf` | 扩展点 / IP 名单 / 统一错误页映射 |
+| `deploy-conf/nginx/subconf/{global,geo}.conf` | http 层扩展点 / IP 名单（这两个由 `nginx.conf` 直接 include） |
+| `deploy-conf/nginx/subconf/{ssl,cross_domain,error_pages}.conf` | 通用 SSL 参数（ciphers/协议/session 缓存，证书路径为占位符 `<DOMAIN>`）/ 通用 CORS 片段 / 统一错误页映射——这三个**按需在 server 块 include**，不由 `nginx.conf` 自动加载 |
 | `deploy-conf/nginx/upstream/upstream.conf` | upstream 扩展点（默认空，按需声明负载均衡组） |
 | `deploy-conf/nginx/vhosts/README.md` | 源码安装 nginx 时的 include 目标说明（站点配置 `<name>.*.conf` 由 `/new-java-project` 生成在上一级目录） |
 | `deploy-conf/nginx/cert/README.md` | 说明 SSL 证书应放在这里（不纳入版本管理） |
@@ -316,9 +348,9 @@ software-engineering-skills/
 | 能力 | 说明 |
 |---|---|
 | 默认 task | `compileDebugKotlin`（只编译校验），`-t/--task` 可指定其他 task（如 `assembleDebug`） |
-| SDK 定位 | 优先 `src/android/local.properties` 的 `sdk.dir`（本机配置，不提交版本库），其次 `ANDROID_HOME` |
+| SDK 定位 | 优先 `src/android/local.properties` 的 `sdk.dir`（本机配置，不提交版本库），其次 `ANDROID_HOME`（默认 `$HOME/Android/Sdk`）；两者都取不到时列出缺失依赖并失败 |
 | gradle | 优先 `src/android/gradlew`，回退系统 `gradle` |
-| 签名校验 | task 含 release 时提前校验 `ANDROID_KEYSTORE_PATH` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` |
+| 签名校验 | task 含 release 时提前校验 `ANDROID_KEYSTORE_PATH` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`，并核对 keystore 文件真实存在（缺变量或缺文件都在起构建前就报错） |
 | 日志与状态 | 构建日志落盘 `runtime/build-android-<时间戳>.log`，失败摘最后 120 行；`[STATUS] SUCCESS/ERROR` 机器可读输出 |
 
 ---
@@ -342,12 +374,13 @@ software-engineering-skills/
 | 能力 | 说明 |
 |---|---|
 | 编译校验 | `xcodebuild build`，`destination=generic/platform=iOS Simulator`，`CODE_SIGN_IDENTITY="-"`（ad-hoc 签名，无需证书；iOS 17+ 模拟器对未签名 App 的 Keychain 访问会静默失败，ad-hoc 可规避） |
-| 工程定位 | `-p/--project` 显式指定；否则当前目录自动查找（优先 `.xcworkspace`，其次 `.xcodeproj`，多个则报错） |
-| scheme / 配置 | `-s/--scheme` 指定或读工程第一个 scheme；`-c/--configuration` 默认 Debug，分发包建议 Release |
-| 产物归档 | 模拟器 `.app` zip 归档到 `mobile-apps/<产品名>-ios-<配置>-<版本>.zip`（与 Android APK 同目录） |
-| `--run` | 安装到可用 iPhone 模拟器并启动（Bundle ID 动态读取，界面验证用） |
-| `--ipa` | `archive` + `exportArchive` 打真机 `.ipa`；Team ID 必须显式提供（`-t/--team` 或 `IOS_TEAM_ID`），导出方式走 `IOS_EXPORT_METHOD`；签名账号未就绪时提示并跳过，不视为构建失败 |
-| 日志与状态 | 构建日志落盘 `runtime/build-ios-<时间戳>.log`，失败摘 error 行（最多 40 条）；`[STATUS] SUCCESS/ERROR/SKIPPED` 机器可读输出 |
+| 工程定位 | `-p/--project` 或环境变量 `IOS_PROJECT_PATH` 显式指定；否则当前目录自动查找（优先 `.xcworkspace`，其次 `.xcodeproj`，找到多个则报错） |
+| scheme / 配置 | `-s/--scheme`（或 `IOS_SCHEME`）指定，不指定时用 `xcodebuild -list` 读工程第一个 scheme；`-c/--configuration` 默认 Debug，分发包建议 Release |
+| 产物归档 | 模拟器 `.app` zip 归档到 `mobile-apps/<产品名>-ios-<配置>-<版本>.zip`（配置段转小写，与 Android APK 同目录） |
+| `-r/--run` | 安装到可用 iPhone 模拟器并启动（Bundle ID 动态读取，界面验证用；需 Xcode 已下载模拟器运行时） |
+| `-i/--ipa` | `archive` + `exportArchive` 打真机 `.ipa`，产物 `mobile-apps/<产品名>-ios-<配置>-<版本>.ipa`；Team ID 必须显式提供（`-t/--team` 或 `IOS_TEAM_ID`，无默认值，缺参在构建开始前就报错）；导出方式走 `IOS_EXPORT_METHOD`（`development`\|`ad-hoc`\|`enterprise`\|`app-store`，默认 `development`，非法值直接报错退出）；签名账号未就绪（Xcode 未登录/无证书无 profile）时提示并跳过，`[STATUS] SKIPPED` 且退出码 0，不视为构建失败 |
+| 签名证书 | `-I/--identity`（或 `IOS_CODE_SIGN_IDENTITY`，参数优先）；`--ipa` 未指定时按导出方式推断——`development` → `Apple Development`，`ad-hoc`/`enterprise`/`app-store` → `Apple Distribution` |
+| 日志与状态 | 构建日志落盘 `runtime/build-ios-<时间戳>.log`（`--ipa` 另出 `runtime/build-ios-ipa-<时间戳>.log`），失败时摘 error 行最多 40 条 **+ 最后 60 行**；`[STATUS] SUCCESS/ERROR/SKIPPED` 机器可读输出 |
 
 **注意**：生成的脚本只能在 macOS 上运行（脚本内部有 `uname -s` 校验），在 Linux 开发机上生成后
 需到 Mac 上执行；`--ipa` 前需在 Xcode → Settings → Accounts 登录对应 Apple 开发者账号。
@@ -360,7 +393,7 @@ software-engineering-skills/
 
 - **任务摘要**：每次任务完成后输出中文摘要，四个固定块顺序不可变：时间行（开始 / 结束 / 耗时）→ `### 任务结果` → `### 影响范围` → `### 人工待办`；三个内容块的条目一律用 `1.` `2.` `3.` 编号（不用 `-` 圆点），以便与飞书通知逐字一致并渲染为有序列表；纯对话/查询类请求不输出摘要
 - **影响范围**：只描述"改动了什么"——`新增文件`、`修改文件`、`删除文件`、`数据库变更`（表结构与数据订正，无则写"无"）、`飞书通知` 状态行
-- **人工待办**：需要人介入的事项**从影响范围中提取出来，单独成块**（不再是影响范围的子项），块内逐条以 `@角色` 开头标明由谁处理——`@研发`/`@测试`/`@运维`/`@DBA`/`@产品`/`@安全`/`@运营`/`@销售`/`@CEO`（覆盖不到可自定义角色，禁止写真实人名）；条目 = 具体动作 + 触发条件/操作入口，无人工介入项时写 `1. 无`，该块不得省略，也不得把待办混写进任务结果或影响范围的文字里
+- **人工待办**：需要人介入的事项**从影响范围中提取出来，单独成块**（不再是影响范围的子项），块内逐条以 `@角色` 开头标明由谁处理——`@研发`/`@测试`/`@运维`/`@DBA`/`@产品`/`@安全`/`@运营`/`@销售`/`@CEO`（覆盖不到可自定义角色，禁止写真实人名；确实判不出归属时默认 `@研发` 并在条目内说明原因）；每行行首**必须且只能有一个** `@角色`，条目 = 具体动作 + 触发条件/操作入口，智能体本可自动完成的事项不得列入；无人工介入项时写 `1. 无`，该块不得省略，也不得把待办混写进任务结果或影响范围的文字里
 - **全局时间**：所有时间按东八区（UTC+8）处理，默认格式 `YYYY-MM-DD HH:MM:SS`
 - **飞书完成通知（白名单）**：仅**代码实现 / Bug 修复 / 测试 / 产品新增功能 / Bug 转 case / 生成待办信息**六类任务推送，正文**逐字照搬摘要原文**（不精简、不压缩、不改写）；卡片正文一律用 markdown 元素承载（小标题加粗 + 有序列表，不用代码块）；"生成待办信息"指产出需他人处理的实质待办（手工执行 SQL、上线前准备、需人工验证），等待用户决定推送的流程性待办不计入；咨询答疑、方案规划、文档修改、`git commit`/`push`/PR、skill 安装与文案维护等一律不发送；参数可选，不配置或配置不全则静默跳过，见下
 - **v0 文档保护**：工程根目录 `v0/` 下的原始产品设计文档只读，禁止修改（`src/web/v0/` 为 AI 生成代码目录，不受此限制）
@@ -384,7 +417,7 @@ software-engineering-skills/
 1. 新增文件：…
 2. 修改文件：…
 3. 数据库变更：无
-4. 飞书通知：已发送 | 不在发送范围（跳过）
+4. 飞书通知：已发送 | 不在发送范围（跳过） | 未配置（跳过） | 发送失败（<原因>）
 
 ### 人工待办
 1. @运维 部署后重启 supervisor 服务 <name>（上线时执行）
@@ -400,7 +433,7 @@ software-engineering-skills/
                                  # 激活并开启飞书完成通知
 /common-rules --feishu-webhook=URL --feishu-secret=CODE
                                  # 机器人开启"加签"时须同时传 secret
-/common-rules -h                 # 查看帮助
+/common-rules -h                 # 查看帮助（不激活任何规范）
 ```
 
 **飞书通知参数（均可选）**
@@ -441,7 +474,8 @@ software-engineering-skills/
   --project-id=1                         # 全参数指定，直接开始
 /aibug --host=... --username=... --password=... \
   --project-id=1 --bug-id=170,172        # 只处理这两条，逐条串行、各自回写（任意原状态均可）
-/aibug                                   # 交互式，逐一询问参数
+/aibug --project-id=1                    # 缺 host/username/password 时一次性列出、统一交互补齐
+/aibug                                   # 缺 --project-id：直接报错终止，不交互询问、不继续执行
 /aibug -h                                # 查看帮助（带 -h 时只出帮助，忽略其它参数）
 ```
 
@@ -460,7 +494,7 @@ software-engineering-skills/
 
 | 参数 | 说明 |
 |---|---|
-| `--bug-id` | 指定模式：跳过 `/bugs/next` 队列，只处理这些条并各自回写状态（正整数，可逗号分隔多个如 `170,172`，任一段非法直接报错；去重后按给定顺序逐条串行；不限原状态，但会覆盖原状态，**跳过 `IN_PROGRESS` 预标记**，全部处理完即结束） |
+| `--bug-id` | 指定模式：跳过 `/bugs/next` 队列，只处理这些条并各自回写状态（正整数，可逗号分隔多个如 `170,172`，任一段非法直接报错、不静默忽略也不退回队列模式；去重后按给定顺序逐条串行、不重排不按状态排序；不限原状态，但本轮终态会覆盖原状态，全部处理完即结束）。**同样先标 `IN_PROGRESS` 再处理**：该条就此脱离队列，且服务端会连带清空原有 `fixNote`/`failReason`（落库不可恢复），所以取卡时必须把原状态与两个字段原文记入台账；本轮异常终止则该条卡在 `IN_PROGRESS`，只能按台账到 aibug 界面人工回退 |
 
 **工作流程**
 
@@ -483,7 +517,7 @@ software-engineering-skills/
    base64 内联图会被过滤成空 href/src）
 7. 每次 PUT 后回读 `GET /bugs/{id}` 逐行确认状态与说明字段的三个标签行落库一致，再循环回到第 2 步，直到队列清空。**回写寻址硬约束**：状态只走按当前 `#bugId` 的单条接口 `PUT /bugs/{id}/status`，**禁用**批量接口 `PUT /bugs/batch/status`；PUT 路径、PUT 响应里的 `id`、回读路径三处必须完全相同，且只取本轮 Bug 卡的 `id`（不从台账或历史结论里推断）；出现不一致立即终止（指定模式终止整个执行），记为回写异常，不改写任何其它 Bug
 
-完成后输出汇总：处理总数、AI_FIXED 数量（其中已修复/重复修复、本轮零改动 m 个，逐条 #id 与已存在修复位置）、AI_PARTIALLY_FIXED 数量及各自 `待修复` 行原文、FAILED 数量及 `现象`+`下一步` 行原文、项目校验不通过清单、回写异常（ID 不一致已终止）清单、异常终止清单（卡在 `IN_PROGRESS` 的 #id + 取卡时的原状态 + 台账记下的说明字段原文）。`AI_PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取；`待修复` 与 `下一步` 两行同时进入人工待办，`@角色` 按行内点名的归属填写。
+完成后输出汇总：处理总数、AI_FIXED 数量（其中已修复/重复修复、本轮零改动 m 个，逐条 #id 与已存在修复位置）、AI_PARTIALLY_FIXED 数量及各自 `待修复` 行原文、FAILED 数量及 `现象`+`下一步` 行原文、项目校验不通过清单、回写异常（ID 不一致已终止）清单、异常终止清单（卡在 `IN_PROGRESS` 的 #id + 取卡时的原状态 + 台账记下的说明字段原文）。`AI_PARTIALLY_FIXED` 的 Bug 已脱离 PENDING 队列（`/bugs/next` 只下发 PENDING），剩余问题需人工在 aibug 界面改回 `PENDING` 才会被下一轮领取；`待修复` 与 `下一步` 两行同时进入人工待办，`@角色` 按行内点名的归属填写（如 `@DBA`/`@运维`/`@产品`），未点名归属时默认 `@研发`。
 
 ---
 
@@ -519,9 +553,9 @@ software-engineering-skills/
 1. 登录获取 token → `GET {host}/aibug/api/bugs/since?since=<时间>&project-id=<项目ID>[&reporter=<提报人>][&start-id=<起始ID>]` 拉取 Bug 清单（三个过滤条件下推服务端，在数据库完成）
 2. 逐条一致性校验：`projectId` 与 `--project-id` 不符即跳过；指定 `--reporter` 时还校验提报者；校验不通过记录在最终汇总逐条列出。指定 `--start-id` 时不做本地过滤，若响应仍出现 `id<起始ID` 记录，判为服务端未处理 `start-id` 的接口契约异常，立即终止并提示确认/升级 aibug 服务端
 3. 去重：已有用例元信息含 `aibug Bug #<id>` 的跳过
-4. 逐个判定：功能/接口/业务流程类 → 转化；文案样式微调、一次性数据、环境配置类 → 跳过并记录原因
-5. 生成 `test/cases/TEST-CASE-{4位编号}.md`：**优先级固定 P1**，元信息追加 `生成来源：AICASE SKILL（aibug Bug #<id>）`
-6. 重建 `test/cases/case-summary.md`（AICASE 生成的用例名称后缀 `（AICASE）`）
+4. 判定 + 生成（合并为一次子 agent 调用）：主循环只做去重、**预分配 4 位编号**、调度与记台账，不读 Bug 全文；每条 Bug 单独委托一个子 agent 且**严格逐条串行**（禁止并行派多个子 agent，禁止与 `/aibug`、`/do-test` 并发），Bug 详情由子 agent 自行 `GET /bugs/{id}` 获取。判定标准：功能/接口/业务流程类 → 转化；文案样式微调、一次性数据、环境配置类 → 跳过并记录原因。每处理完 5 条或上下文约 60% 时 `/compact` 一次
+5. 写入 `test/cases/TEST-CASE-{4位编号}.md`：编号 = 现有最大编号 + 本轮已分配数（无文件从 `0001` 起），一轮可生成多个；**优先级固定 P1**，元信息追加 `生成来源：AICASE SKILL（aibug Bug #<id>）`
+6. 重建 `test/cases/case-summary.md`：扫描**全部历史用例**覆盖式更新（不只本轮生成的，每个用例只 grep 名称/来源/优先级/流程、不读全文），AICASE 生成的用例名称后缀 `（AICASE）`
 
 本 skill 只读 aibug 数据，不修改任何 Bug 状态；生成后可用 `/do-test --task=cases` 执行。
 
@@ -549,7 +583,7 @@ software-engineering-skills/
 | 参数 | 说明 |
 |---|---|
 | `--base-url` | 后端 API 基础地址；不传则自动探测（各端 env / proxy 配置 / nginx vhost / specs） |
-| `--client` | 只扫描指定端（web / miniapp / android / ios），可多次传入；不传则扫描实际存在的所有端 |
+| `--client` | 只扫描指定端（web / miniapp / android / ios），可多次传入取并集，未点名的端整端跳过（清单、验证与报告口径同步收窄）；**点名的端在工程里不存在时直接报错终止**（`错误：工程中不存在 <端> 代码目录`），不静默回退成全端扫描；不传则扫描实际存在的所有端 |
 | `--allow-write` | 允许直接探测 POST/PUT/DELETE 写操作 API（默认逐个询问） |
 | `--bucket` | 请求桶并发大小（整数 **1-4**，默认 `2` = 每 2 条连续请求一桶并发；`1` = 严格串行逐条）。N>1 时把清单连续 N 条编为一桶同时发出，**桶与桶之间仍串行**（上一桶结果落台账后才起下一桶）；写操作、修复后复验与后端重启、有前后依赖的成对请求一律不进桶；非法值或 N>4 直接报错终止（不钳制） |
 | `--no-fix` | 只检查并输出报告，不修改代码 |
@@ -595,10 +629,10 @@ software-engineering-skills/
 
 **工作流程**
 
-1. 前置检查：确定任务范围（--task，默认全部）、确认工程结构、扫描 `test/cases/` 用例清单
+1. 前置检查：确定任务范围（--task，默认全部）、确认工程结构、扫描 `test/cases/` 用例清单（**主循环不读用例全文**：有 `case-summary.md` 就只从中取编号/名称/优先级，否则只 `ls` 文件名）；已有 `test/test-report.md` 时只 grep 上一轮汇总行供本轮标注"回归对比"，不整份读取
 2. API 验证：调用 /api-test（固定 `--bucket=4`，桶间仍串行；透传 `--no-fix`、`--base-url`，用户显式给 `--bucket` 时按用户值），产出 `test/api/url-list.md` 与 `test/api/test-result.md`
-3. 场景验证：按用例定义逐步执行判定，步骤类型 API（curl）/ UI（支持 Playwright 时自动转写执行，否则标记需人工）/ 人工，执行后核对结果验证与善后清理；case-summary.md 存在时按其优先级（P0→P1→P2）排序执行，否则默认顺序
-4. 汇总报告：合并两部分结果写入 `test/test-report.md` 并输出中文摘要
+3. 场景验证：每个用例单独委托一个子 agent 执行且**严格逐条串行**（上一个出结论才启动下一个，禁止并行、禁止与 `/aibug`、`/aicase` 并发；子 agent prompt 只含当前用例路径，不携带之前用例的内容与结论），每执行完 5 个用例或上下文约 60% 时 `/compact` 一次；按用例定义逐步执行判定，步骤类型 API（curl）/ UI（支持 Playwright 时自动转写执行，否则标记需人工）/ 人工，执行后核对结果验证与善后清理；`case-summary.md` 存在时按其优先级（P0→P1→P2）排序执行，否则默认顺序
+4. 汇总报告：按实际执行的任务合并结果写入 `test/test-report.md` 并输出中文摘要
 
 ---
 
@@ -643,7 +677,7 @@ software-engineering-skills/
 - **运行时**（`--url` 启用）：HTTP 安全头、OWASP Top 10 只读探测、JWT/Cookie 检查、
   TLS/SSL 配置、端口暴露面；Nuclei/ZAP 可用时追加
 
-汇总输出 `test/security/security-check-report.md`，可选最小化修复。
+汇总输出 `test/security/security-check-report.md`（跑 `sbom` 维度时另出 `test/security/sbom.cdx.json`），可选最小化修复。
 第三方工具（semgrep / trivy / gitleaks / testssl.sh / nmap / nuclei / ZAP）
 的安装命令与用法见 `/do-security-check -h`。
 
@@ -664,7 +698,7 @@ software-engineering-skills/
 --type=<维度>            只执行指定维度，可多次传入；取值 review/sast/sca/secret/history/iac/license/sbom/dast/ssl/port/nuclei/zap/all，默认全部静态维度
 --url=<地址>             运行时检测目标（须为 staging/测试环境），自动启用 dast+ssl
 --mode=<auto|augmented>  auto=仅工具；augmented=工具 + 智能体深度分析（默认）
---severity=<级别>        报告过滤级别（默认全部展示，CRITICAL/HIGH 高亮）
+--severity=<级别>        报告过滤 CRITICAL/HIGH/MEDIUM/LOW（默认全部展示，CRITICAL/HIGH 置顶高亮）
 --fix                    对高置信问题执行最小化修复并复扫（默认只出报告）
 ```
 
@@ -673,7 +707,7 @@ software-engineering-skills/
 1. 前置检查：第三方工具可用性（缺失给出安装命令，经同意后安装）
 2. 静态检测：按维度执行，收集 JSON 结构化结果
 3. 运行时检测（有 `--url`）：安全头 + OWASP 只读探测 + JWT + TLS + 端口暴露面；nuclei/zap 可用时追加
-4. 汇总修复：`--fix` 时最小化修复并复扫，报告写入 `test/security/security-check-report.md`
+4. 汇总修复：`--fix` 时对高置信问题最小化修复并复扫验证，报告写入 `test/security/security-check-report.md`（`sbom` 维度另出 `test/security/sbom.cdx.json`）并输出中文摘要
 
 ---
 
@@ -707,9 +741,9 @@ software-engineering-skills/
 
 **加工五步**：`拆`（按 `，；。 + ①②③` 切子句，顿号与斜杠不切；默认读首行，首行是裸 `update`/台账类**必须先读该提交正文**再判定，正文只用于救回无对象的首行、为已选项补原词，不得派生首行未涉及的新条目）→ `去噪`（台账/留痕、裸 update、空 `no message`、纯取证、无外部行为的 refactor/chore，丢弃并按类计数）→ `归并`（按功能域聚类，一条提交命中多域则分别落项）→ `定性`（新增 / 修复 / 口径与约定变更三段；**3.2 优先于 3.4**：`test:` / `docs:` / `chore:` 前缀提交的子句再像口径变更也不入两段，口径段只由 `feat:`/`fix:` 或明确写出外部行为变化的提交支撑）→ `溯源`（每个功能项必须挂 ≥1 个 commit 短 hash，挂不上的项不允许存在）。
 
-**输出**：`## 功能清单：<分支>（<起点锚> → <终点锚>，终点：<三种性质之一>，N 条提交 → M 个功能点）` + 三段清单（每项 `**功能名**：说明（hash, hash）`，按重要度排序，影响资金/履约/权限的在前）+ `> 未列入：…` 一行 + `总结：…` + `起止：<开始> ~ <结束>（东八区）` 一行。
+**输出**：`## 功能清单：<分支>（<起点锚> → <终点锚>，终点：<三种性质之一>，N 条提交 → M 个功能点）` + 三段清单（新增 / 修复 / 口径与约定变更，**固定渲染**，某段无内容写一行 `（无）`；每项 `**功能名**：说明（hash, hash）`，按重要度排序，影响资金/履约/权限的在前）+ `### 内部改造` 与 `> 未列入：…`（这两段**仅在确有内容时**输出）+ `总结：…` + `起止：<开始> ~ <结束>（东八区）` 一行。同一区间多次运行，输出形状必须一致。
 
-「总结」是固定槽位，格式 `总结：<要点 1；要点 2；要点 3>（N 条提交 → M 个功能点，新增 x / 修复 y / 口径变更 z）`：**主体是产品功能与 bug 修复要点**——从清单已渲染项里按重要度挑最多 3 条，优先修复类与影响资金/履约/权限的功能，只能挑不能新造，保留表名/错误码/接口路径原词；计数退到末尾括号（三段条数是清单渲染的**功能项数**，不是 commit 前缀计数）。上限 2 行 / 120 字，不评价质量、不提建议；`M = 0` 与 `--raw` 时不输出该段。「终点」是表头固定槽位，只有两种取值：`并入 main 的 merge` / `分支 tip（未并入）`，写在括号内，禁止在括号外补解释。功能点为 0、区间 0 条、或区间内无任何 `feat:`/`fix:` 与写出外部行为变化的提交时**不渲染空三段模板**，改出「区间性质判定」：一行定性 + 提交构成（feat/fix/test/docs 各多少条）+ 实测核对信息（最近一条独有提交、相邻分支及其提交数，只作参考、不自动改跑，要换分支就直接 `--branch=<分支>`）。功能项超过 60 条截断并提示用 `--limit` 收窄。本 skill 属只读汇总类任务，尾注即这一行起止时间，不输出规范一的其余三块。
+「总结」是固定槽位，格式 `总结：<要点 1；要点 2；要点 3>（N 条提交 → M 个功能点，新增 x / 修复 y / 口径变更 z）`：**主体是产品功能与 bug 修复要点**——从清单已渲染项里按重要度挑最多 3 条，优先修复类与影响资金/履约/权限的功能，只能挑不能新造，保留表名/错误码/接口路径原词；计数退到末尾括号（三段条数是清单渲染的**功能项数**，不是 commit 前缀计数）。上限 2 行 / 120 字，不评价质量、不提建议；`M = 0` 与 `--raw` 时不输出该段。「终点」是表头固定槽位，取值只有三种：`并入 main 的 merge` / `已并入 main（fast-forward / 无 merge 提交）` / `分支 tip（仍有提交未并入）`，写在括号内，禁止在括号外补解释，也不要臆造第四种。功能点为 0、区间 0 条、或区间内无任何 `feat:`/`fix:` 与写出外部行为变化的提交时**不渲染空三段模板**，改出「区间性质判定」：一行定性 + 提交构成（feat/fix/test/docs 各多少条）+ 实测核对信息（最近一条独有提交、相邻分支及其提交数，只作参考、不自动改跑，要换分支就直接 `--branch=<分支>`）。功能项超过 60 条截断并提示用 `--limit` 收窄。本 skill 属只读汇总类任务，尾注即这一行起止时间，不输出规范一的其余三块。
 
 **防编造硬约束**：信息源只有 commit message（区间内那批，含首行与上述受限正文），禁止读 diff/代码/文档补全功能；措辞只能用提交原文出现过的名词与结论（错误码、表名、接口路径原样保留，不泛化）；跨类型/跨渠道/跨端的分句不得压成一句；判定不了的一律进「未列入」，禁止把测试侧判据抬成产品口径；功能项数不得超过拆出的子句总数；统计与时间（含候选区间提交数）必须来自当次实测命令输出，禁止估算。
 
@@ -729,16 +763,27 @@ software-engineering-skills/
 /db-compare -h                                      # 查看帮助
 ```
 
+默认是 `run` 模式（抓两侧并比对）。同一脚本（在 skill 目录内，不在目标工程里）另有两个模式：
+
+```bash
+bash <skill 目录>/scripts/db-compare.sh dump --side=src [--src-db=dev] [--service=NAME]  # 只导出源侧结构快照 TSV
+bash <skill 目录>/scripts/db-compare.sh dump --side=dst --dst-db=<主机名>                 # 只导出目标侧快照
+bash <skill 目录>/scripts/db-compare.sh compare --src=<快照A> --dst=<快照B>               # 离线比对两份快照，不连库
+```
+
+两侧 schema 名不同（源 `public`、目标 `app`）时不支持一次比对，只能各自 `dump` 后用 `compare` 离线比。
+
 **参数**
 
 | 参数 | 说明 |
 |---|---|
 | `--dst-db` | **必填，无默认值**：目标环境远程主机名。缺失只提醒不猜测，也不会拿本项目 `src/backend/<服务>/.env.prod` 顶替 |
-| `--src-db` | 源环境 `dev`（默认）/ `test` / `prod`，分别读 `src/backend/<服务>/.env`、`.env.test`、`.env.prod` |
+| `--src-db` | 源环境 `dev`（默认）/ `test` / `prod`，分别读 `src/backend/<服务>/.env`、`.env.test`、`.env.prod`；其它取值直接失败 |
 | `--src-host` | 源侧也在远程主机时使用（默认本机直连） |
 | `--service` | 定位 `src/backend/<服务>/` 与远端 `/opt/soft/apps/<服务>/.env`；本机仅一个后端时自动识别 |
 | `--schema` | 比对的 schema，默认 `public`；一次只比一个 schema |
 | `--out` | 报告另存 markdown 文件（默认只输出到对话） |
+| `--side` / `--src` / `--dst` | 分别用于 `dump`（导哪一侧）与 `compare`（两份快照路径）模式 |
 
 **比对粒度与范围**
 
