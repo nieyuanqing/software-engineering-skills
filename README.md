@@ -29,7 +29,7 @@
 | [`/new‑nginx‑conf`](#new-nginx-conf) | 在当前目录生成标准、通用的 nginx 主机级基础配置 `deploy-conf/nginx/` |
 | [`/new‑android‑build`](#new-android-build) | 为含 Android 工程的仓库生成 `scripts/android-build.sh` 编译校验脚本 |
 | [`/new‑macos‑build`](#new-macos-build) | 为含 iOS 工程的仓库生成 `scripts/macos-build.sh` 构建校验与打包脚本 |
-| [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、人工待办按 @角色 分派、飞书卡片 2.0 单栏通知（白名单：代码实现/Bug 修复/测试/新增功能/Bug 转 case/生成待办）、v0 文档只读保护、禁止硬编码、commit 格式、CORS 走 nginx、三环境配置对齐、API 安全基线） |
+| [`/common‑rules`](#common-rules) | 激活通用行为规范（任务摘要、人工待办按 @角色 分派、飞书卡片 2.0 单栏通知（白名单：代码实现/Bug 修复/测试/新增功能/Bug 转 case/生成待办）、v0 文档只读保护、禁止硬编码、commit 格式、CORS 走 nginx、三环境配置对齐、API 安全基线、禁止自造术语） |
 | [`/aibug`](#aibug) | 连接 aibug Bug 管理系统，循环自动修复 PENDING 状态的 Bug |
 | [`/aicase`](#aicase) | 连接 aibug 系统，按时间拉取 Bug 清单，逐个分析转化为回归测试用例（test/cases/，P1，标记 AICASE SKILL 生成） |
 | [`/api‑test`](#api-test) | 全端（web 管理后台 / 小程序 / Android / iOS）扫描后端 API 生成 URL 清单，逐个验证 HTTP 200，非 200 与业务不合理处均定位修复 |
@@ -58,9 +58,10 @@ software-engineering-skills/
 └── .claude/skills/
     ├── aibug/SKILL.md                 连接 aibug 系统，自动循环修复 Bug
     ├── aicase/SKILL.md                拉取 aibug 近期 Bug，转化为回归测试用例（P1，AICASE 标记）
-    ├── common-rules/SKILL.md          通用行为规范（九条：任务摘要（含人工待办 @角色 分派）、
+    ├── common-rules/SKILL.md          通用行为规范（十条：任务摘要（含人工待办 @角色 分派）、
     │                                  飞书卡片 2.0 单栏通知、v0 保护、禁止硬编码、commit 格式、
-    │                                  CORS、三环境对齐、API 用 code 标识资源、对象级授权防 IDOR）
+    │                                  CORS、三环境对齐、API 用 code 标识资源、对象级授权防 IDOR、
+    │                                  禁止自造术语）
     ├── api-test/SKILL.md              全端扫描后端 API 生成 URL 清单，逐个验证 HTTP 200 并修复
     ├── do-test/SKILL.md               测试总驱动：API 验证（委托 api-test）+ test/cases/ 场景用例
     ├── new-test-case/SKILL.md         新增单个测试用例 TEST-CASE-{4位编号}.md 到 test/cases/
@@ -389,7 +390,7 @@ software-engineering-skills/
 
 ### `/common-rules`
 
-通用行为规范，激活后对当前会话所有任务生效，共九条强制规范 + 全局时间规范：
+通用行为规范，激活后对当前会话所有任务生效，共十条强制规范 + 全局时间规范：
 
 - **任务摘要**：每次任务完成后输出中文摘要，四个固定块顺序不可变：时间行（开始 / 结束 / 耗时）→ `### 任务结果` → `### 影响范围` → `### 人工待办`；三个内容块的条目一律用 `1.` `2.` `3.` 编号（不用 `-` 圆点），以便与飞书通知逐字一致并渲染为有序列表；纯对话/查询类请求不输出摘要
 - **影响范围**：只描述"改动了什么"——`新增文件`、`修改文件`、`删除文件`、`数据库变更`（表结构与数据订正，无则写"无"）、`飞书通知` 状态行
@@ -402,6 +403,7 @@ software-engineering-skills/
 - **CORS 走 nginx**：禁止在 Java 后端处理跨域，统一由 nginx 配置写入
 - **三环境配置对齐**：dev/test/prod 三套配置文件（env、nginx vhost、application yml）配置项集合必须保持对齐，新增/删除/更名配置项时三套同步变更，仅值可因环境不同
 - **API 安全基线**：对外 API 用不可预测的 code 代替自增主键 ID 标识资源（防枚举、防业务量泄露）；服务端必须做对象级授权，校验资源归属（防 IDOR 越权）
+- **禁止自造术语**：技术文档、代码注释、标识符、数据库列名、接口参数、配置键、状态档位命名以及回答与方案措辞，表达既有概念时一律用行业标准术语或领域通用说法（RFC / OWASP / W3C / 主流框架官方文档 / DDD 等可查证来源），不自造名词与缩写、不把口语比喻升格成术语；确需自造须先检索确认无现成术语、概念确属本项目私有，并在首次出现处给定义与标准说法对照、明示"本项目自定义"。发现历史自造词先出 `原用词 → 标准用词（出处） → 出现处数` 对照表确认后全库一次性统一（更名涉及列名/接口字段时同步三套环境并走 Flyway 迁移）
 
 **摘要结构**（`### 人工待办` 为独立块，不在影响范围内）
 
